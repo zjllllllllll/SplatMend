@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+config.local.cmd
+outputs/
+work_*/
+old_results/
+*.log
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
+
+# Model weights are supplied locally and are intentionally not uploaded.
+third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt
+third_party/lingbot-depth/model/lingbot-depth/model.pt
