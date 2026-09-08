@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="本地高斯场景圈选、删除和深度锚定补洞工具">
+  <title>Gaussian Repair Studio</title>
+  <link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <header><div class="brand"><span class="mark">G</span><strong>Gaussian Repair</strong><span class="studio">STUDIO</span></div><span class="local"><i></i> 本地工作区</span></header>
+  <main>
+    <section class="workspace" aria-label="高斯场景">
+      <div class="workspace-bar"><span id="scene-name">未打开场景</span><span id="counts">—</span></div>
+      <div class="stage">
+        <div id="canvas-container"><canvas id="scene-canvas" tabindex="0" aria-label="高斯三维视图"></canvas><div id="tools"></div><div id="lock-shield" hidden><img id="locked-view" alt="当前任务的锁定视图" hidden><span>视角已锁定 · 正在补洞</span></div></div>
+        <div id="empty"><span class="empty-cross">+</span><h1>打开一个高斯场景</h1><p>圈选并删除需要移除的区域，然后一键补洞。</p><button id="open-empty" class="primary">打开 PLY 文件</button><button id="sample" class="quiet" style="margin-top:12px">打开仓库示例</button><small>场景留在本机；只有当前渲染图会发送至公司图片 API。</small></div>
+      </div>
+      <div class="tools-bar" aria-label="编辑工具"><button id="orbit" class="active" disabled>浏览 <kbd>V</kbd></button><button id="lasso" disabled>圈选 <kbd>L</kbd></button><button id="rect" disabled>框选</button><span class="separator"></span><button id="delete" disabled>删除选中 <kbd>Del</kbd></button><button id="undo" disabled>撤销 <kbd>Ctrl Z</kbd></button><button id="clear" disabled>清除选择</button><button id="frame" disabled>适配视图 <kbd>F</kbd></button></div>
+      <footer><span>左键旋转 · 右键平移 · 滚轮缩放</span><span>圈选：Shift 添加 · Ctrl 移除</span></footer>
+    </section>
+    <aside>
+      <div class="panel-head"><h2>场景补洞</h2><button id="open" class="quiet">打开文件</button><input id="file" type="file" accept=".ply" hidden></div>
+      <div class="steps"><span class="current">01 编辑场景</span><span>02 图片修复</span><span>03 三维补洞</span></div>
+      <label for="model">图片模型</label><select id="model" disabled><option>正在读取配置…</option></select>
+      <label for="resolution">锁定视图输出</label><select id="resolution"><option value="2560,1440">2560 × 1440 · 16:9</option><option value="2048,1536">2048 × 1536 · 4:3</option><option value="2048,2048">2048 × 2048 · 1:1</option></select>
+      <small id="model-options" aria-live="polite"></small>
+      <details><summary>补洞提示词</summary><label class="sr-only" for="prompt">补洞提示词</label><textarea id="prompt" rows="9" maxlength="16000"></textarea><small>默认读取仓库中的 prompt.txt。</small></details>
+      <p class="privacy">开始后锁定当前视角，自动保存 RGB、深度、相机和带洞 PLY。完整渲染图会发送给公司 API；GPT / Gemini 先上传私有 OSS，签名链接有效 1 小时，云端原图保留。随后运行原有六步补洞链路。</p>
+      <button id="repair" class="primary start" disabled>开始补洞 <span>→</span></button>
+      <div id="status" role="status" aria-live="polite">正在启动本地工具…</div>
+      <button id="retry-download" class="quiet" hidden>重试图片下载（不重新生图）</button>
+      <button id="retry-pipeline" class="quiet" hidden>重跑三维补洞（复用修复图）</button>
+      <progress id="progress" max="6" value="0" hidden></progress>
+      <div id="job-links" hidden><a id="task-link">任务页面</a><a id="source-link" target="_blank">带洞图</a><a id="repaired-link" target="_blank">API 修复图</a><a id="log-link" target="_blank">运行日志</a><a id="result-link" download="repaired_scene.ply" hidden>下载结果 PLY</a></div>
+      <div class="pipeline-note"><i></i><div>深度锚定 · 原链路保留<small>LingBot → SHARP → 六级边缘融合</small></div></div>
+      <div id="preflight" class="preflight"></div>
+    </aside>
+  </main>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

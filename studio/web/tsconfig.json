@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "es2022", "module": "es2020", "moduleResolution": "bundler",
+    "paths": {"playcanvas": ["./node_modules/playcanvas"]},
+    "lib": ["es2022", "dom", "WebWorker"], "noImplicitAny": true,
+    "strictNullChecks": false, "skipLibCheck": true, "resolveJsonModule": true,
+    "allowJs": true, "checkJs": false, "useUnknownInCatchVariables": false
+  },
+  "include": ["src/**/*", "vendor/supersplat/global.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

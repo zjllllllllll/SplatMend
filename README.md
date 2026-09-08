@@ -1,4 +1,17 @@
-# 单视角深度锚定的 3D Gaussian 补洞 Demo
+# Gaussian Repair Studio · 单视角深度锚定补洞
+
+当前开发分支为 `feature/end-to-end-inpainting`。新增本地端到端工作台：
+打开 PLY → 圈选/框选并删除 → 一键锁定视角和导出 → 调用图片 API →
+执行原六步补洞 → 自动加载验收通过的结果。无需再向在线 SuperSplat 注入代码
+或手动整理每次任务的图片、深度、相机及 PLY。
+
+已有本机环境和已构建界面时，双击 `run_studio.cmd`。首次构建运行
+`build_studio.cmd`。提示词从根目录 `prompt.txt` 读取，图片 API 密钥从
+`api_key.txt` 读取；GPT / Gemini 还需一次性配置 OSS 凭据。完整启动、模型尺寸、
+失败恢复与当前验收状态见 [STUDIO.md](STUDIO.md)。
+
+原数值脚本、模型和 `run_sample.cmd` 参数不变。下文保留原算法、数据契约及
+手工运行说明，供复现与诊断使用。当前仅本地交付，未推送 GitLab；上传另行按用户指示执行。
 
 本仓库是当前已验证的补洞链路最小工程版：在一个带洞视角中合成修复 RGB，用 LingBot 补齐相机深度，再让 SHARP 在生成阶段直接接受这张完整深度；最后按二维洞区与六级边缘带裁出 SHARP 高斯，并原位追加到原场景。链路不再做 ICP、生成后深度缩放、整体平移或 Poisson 后校正。
 
@@ -20,6 +33,10 @@
 ```text
 .
 ├─ assets/                         唯一保留的完整示例输入
+├─ studio/                         本地 Viewer、图片 API、任务调度和测试
+├─ run_studio.cmd                  端到端工作台启动入口
+├─ build_studio.cmd                前端依赖锁定安装与构建
+├─ STUDIO.md                       工作台使用、模型配置和验收状态
 ├─ third_party/
 │  ├─ ml-sharp/                    SHARP 源码、许可证；权重需自行放置
 │  └─ lingbot-depth/               LingBot 源码、许可证；权重需自行放置
@@ -291,7 +308,10 @@ Smoke test 的临时输出在验收后已删除；上表来自删除前的最终
 - 不要随意升级/重装 torch 或 gsplat，Windows 兼容修改和已编译的 sm_120 扩展缓存会被破坏；
 - `run_sharp_hard_depth.py` 会在加载完整 SHARP 模型树前预加载 gsplat CUDA 后端，防止后端被错误初始化为 `None`。
 
-## 上传 GitLab
+## 上传 GitLab（用户验收后）
+
+当前端到端开发分支尚未推送。以下是原最小工程的首次建库说明，不是要求现在
+重新初始化仓库、覆盖 `main` 或提前推送。现有仓库应在用户验收后提交当前功能分支。
 
 两个模型权重不进入 Git；仓库只用 Git LFS 管理示例 PLY 和深度文件。克隆后按“放置模型权重”一节补齐两个 `.pt` 文件即可运行。
 

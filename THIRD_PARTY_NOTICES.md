@@ -33,4 +33,14 @@
 
 ## 项目代码与示例数据
 
+### 本地 Viewer：SuperSplat
+
+- 路径：`studio/web/vendor/supersplat`
+- 固定版本：2.32.5，保留上游 MIT 许可证 `LICENSE`
+- 使用其 PlayCanvas 渲染、选点和编辑模块；工作台界面及自动导出/调度代码单独位于 `studio/`
+- Viewer 手势状态的本地修正记录在 `studio/web/vendor/supersplat/LOCAL_CHANGES.md`
+- 这些修改不涉及 `third_party/ml-sharp`、`third_party/lingbot-depth` 或原六步数值链路
+
+### 自有代码
+
 本仓库当前没有项目级 LICENSE。上传者应在扩大分发范围前，确认自己有权分发 `assets` 中的场景与修复图，并为自有代码选择许可证。第三方许可证不会自动给自有代码或示例数据授权。
