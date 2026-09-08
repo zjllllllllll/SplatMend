@@ -268,7 +268,9 @@ class JobManager:
         state = json.loads(path.read_text(encoding="utf-8"))
         cache = self.image_results.get(job_id, {})
         available = "result" in cache and time.time() - cache.get("received_at", 0) < 1200
-        state["can_retry_download"] = bool(state.get("can_retry_download") and available)
+        supported = state.get("model") in MODELS
+        state["can_retry_download"] = bool(state.get("can_retry_download") and available and supported)
+        state["can_retry_pipeline"] = bool(state.get("can_retry_pipeline") and supported)
         # Explain a known original-algorithm gate without changing its verdict,
         # editing historical artifacts, or rerunning the API/pipeline.
         if (state.get("status") == "failed" and state.get("stage") == 3
@@ -293,6 +295,7 @@ class JobManager:
             state = self.state(job_id)
             if state["status"] != "uploading":
                 raise ValueError("This job was already submitted; create a new job to retry.")
+            model_preflight(state.get("model"))  # also reject retired models in old unsubmitted jobs
             folder = self.jobs / job_id / "input"
             for name in ("point_cloud.png", "point_cloud.depth.npy", "deleted.bin"):
                 if not (folder / name).is_file():
@@ -310,6 +313,7 @@ class JobManager:
                 raise ValueError("Wait for the current task to finish.")
             if not self.state(job_id).get("can_retry_download"):
                 raise ValueError("The in-memory API result is no longer available. A new job requires a new image request.")
+            model_preflight(self.state(job_id).get("model"))
             self.active = job_id
             self.idle.clear()
             self.update(job_id, status="validating", can_retry_download=False, message="Retrying the existing image download; no new generation request.")
@@ -321,6 +325,8 @@ class JobManager:
             state = self.state(job_id)
             if self.active or state["status"] != "failed" or not state.get("image_ready"):
                 raise ValueError("Only a failed pipeline with a completed image can be retried.")
+            if state.get("model") not in MODELS:
+                raise ValueError("This historical model is no longer supported. Open a scene and choose a supported model.")
             self._verified_repaired_image(job_id)
             self.active = job_id
             self.idle.clear()
@@ -456,7 +462,8 @@ class JobManager:
             retryable = isinstance(error, ImageDownloadError) and "result" in self.image_results.get(job_id, {})
             if not retryable:
                 self.image_results.pop(job_id, None)
-            self.update(job_id, status="failed", message=safe[:1000], log=f"/api/jobs/{job_id}/pipeline.log",
+            self.update(job_id, status="failed", failed_phase=self.state(job_id).get("status"),
+                        message=safe[:1000], log=f"/api/jobs/{job_id}/pipeline.log",
                         can_retry_download=retryable, can_retry_pipeline=bool(self.state(job_id).get("image_ready")))
         finally:
             with self.lock:

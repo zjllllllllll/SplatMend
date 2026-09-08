@@ -20,6 +20,8 @@ import { capture, cameraMetadata } from './capture';
 import { requestOptions } from './model-options.mjs';
 import { restoredDeletionOp } from './restore-deletion.mjs';
 import { rememberedJob } from './job-navigation.mjs';
+import { isEditing, keyboardNavigation } from './keyboard-navigation.mjs';
+import { phase, jobProgress, renderProgress } from './job-progress.mjs';
 
 type SceneInfo = { id: string, name: string, count: number, file: string };
 type ModelProfile = { id: string, label: string, sizes: [number, number][], input_transport: string, response_format: string };
@@ -48,6 +50,18 @@ let scene: Scene;
 let history: EditHistory;
 let tools: ToolManager;
 let lastJobId: string = null;
+let navigation: ReturnType<typeof keyboardNavigation>;
+let currentProgress: ReturnType<typeof phase> = null;
+
+function showProgress(next: ReturnType<typeof phase>, reveal = false) {
+    currentProgress = next;
+    renderProgress(document, next);
+    if (reveal) el('job-progress').closest('aside').scrollTop = 0;
+}
+
+function failProgress(message: string) {
+    if (currentProgress) showProgress(phase(currentProgress.index, message, 'failed'));
+}
 
 function forgetJob() {
     lastJobId = null;
@@ -55,6 +69,8 @@ function forgetJob() {
     window.history.replaceState(null, '', '/');
     el('retry-download').hidden = true;
     el('retry-pipeline').hidden = true;
+    showProgress(null);
+    el('job-links').hidden = true;
 }
 
 async function api(url: string, method = 'GET', body?: BodyInit, type?: string) {
@@ -97,7 +113,7 @@ function modelOptions() {
 
 function setBusy(value: boolean) {
     busy = value;
-    if (value) tools?.activate(null);
+    if (value) { navigation?.clear(); tools?.activate(null); }
     controls();
 }
 
@@ -147,7 +163,6 @@ async function openFile(file: File) {
         el('scene-name').textContent = next.name;
         status('场景已就绪。调整视角，圈选并删除需要移除的区域。');
         el('job-links').hidden = true;
-        el('progress').hidden = true;
     } catch (error) { status(error.message, true); }
     finally { setBusy(false); }
 }
@@ -193,6 +208,7 @@ async function startRepair() {
     if (busy || !active || !source) return;
     setBusy(true);
     const savedCamera = scene.camera.docSerialize();
+    showProgress(phase(0, '检查配置，然后导出锁定视角的 RGB、深度和相机参数。'), true);
     try {
         // Recheck key status before GPU capture or any job creation.
         const config = await api('/api/config');
@@ -205,6 +221,7 @@ async function startRepair() {
         status('已锁定视角，正在导出带洞图片、深度和相机参数…');
         const [width, height] = el<HTMLSelectElement>('resolution').value.split(',').map(Number);
         const exported = await capture(scene, active, width, height);
+        showProgress(phase(1, '正在保存带洞图片、深度、删除记录与相机参数…'));
         const request = { scene_id: source.id, model: el<HTMLSelectElement>('model').value,
             prompt: el<HTMLTextAreaElement>('prompt').value, camera: exported.camera, viewer_camera: savedCamera };
         const job = await api('/api/jobs', 'POST', JSON.stringify(request), 'application/json');
@@ -214,7 +231,7 @@ async function startRepair() {
         await api(`/api/jobs/${jobId}/input/point_cloud.depth.npy`, 'POST', exported.depth);
         await api(`/api/jobs/${jobId}/input/deleted.bin`, 'POST', exported.deleted);
         await followJob(jobId, 'start');
-    } catch (error) { status(error.message, true); }
+    } catch (error) { failProgress(error.message); status(error.message, true); }
     finally { setBusy(false); }
 }
 
@@ -232,6 +249,8 @@ function restoreCamera(view: JobView) {
 
 async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'retry-pipeline') {
     setBusy(true);
+    showProgress(phase(action === 'retry-pipeline' ? 3 : action === 'retry-download' ? 2 : 1,
+        '正在读取同一个任务的状态，不会重复生图…', 'waiting'), true);
     lastJobId = jobId;
     sessionStorage.setItem('repair-studio-job', jobId);
     window.history.replaceState(null, '', `/?job=${encodeURIComponent(jobId)}`);
@@ -242,13 +261,8 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         token = config.token;
         view = await api(`/api/jobs/${jobId}/view`);
         el('scene-name').textContent = view.scene.name;
-        if (!modelProfiles.some(item => item.id === view.model)) {
-            // Restore the historical identity honestly; never map it to a new
-            // Gemini model. The user must explicitly choose a supported model.
-            const oldOption = new Option(`${view.model} · 历史任务`, view.model);
-            oldOption.disabled = true;
-            el<HTMLSelectElement>('model').add(oldOption);
-        }
+        // Retired historical models remain in task records, not in the selector.
+        // An unsupported value selects nothing and blocks a new job until chosen.
         el<HTMLSelectElement>('model').value = view.model;
         el<HTMLTextAreaElement>('prompt').value = view.prompt;
         el<HTMLSelectElement>('resolution').value = `${view.camera.image.width},${view.camera.image.height}`;
@@ -263,9 +277,6 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         el('log-link').hidden = true;
         el('result-link').hidden = true;
         el('job-links').hidden = false;
-        el('progress').hidden = false;
-        const progress = el<HTMLProgressElement>('progress');
-        progress.removeAttribute('value');
         el<HTMLImageElement>('locked-view').src = `/api/jobs/${jobId}/source.png`;
         el('locked-view').hidden = false;
         el('empty').hidden = true;
@@ -288,22 +299,20 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
             try { state = await api(`/api/jobs/${jobId}`); }
             catch {
                 status('本地连接暂时中断，正在重新读取同一个任务；不会重复调用图片 API。', true);
+                showProgress(phase(currentProgress.index, '连接暂时中断，正在重新确认同一个任务的进度。', 'waiting'));
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 continue;
             }
             status(state.message, state.status === 'failed');
-            document.querySelectorAll('.steps span').forEach((step, index) => step.classList.toggle('current',
-                index === (state.status === 'pipeline' || state.status === 'succeeded' ? 2 : 1)));
+            showProgress(jobProgress(state, currentProgress));
             el('repaired-link').hidden = !state.image_ready;
             el('log-link').hidden = !state.log_ready;
-            if (state.stage) progress.value = state.stage;
             if (state.status === 'uploading') throw new Error('任务尚未启动；未调用图片 API。输入已保留，可以重新开始。');
             if (state.status === 'succeeded' || state.status === 'failed') break;
             await new Promise(resolve => setTimeout(resolve, 1500));
         }
-        progress.value = state.stage || 0;
-        el('retry-download').hidden = !state.can_retry_download;
-        el('retry-pipeline').hidden = !(state.status === 'failed' && state.image_ready);
+        el('retry-download').hidden = !state.can_retry_download || !modelProfiles.some(item => item.id === view.model);
+        el('retry-pipeline').hidden = !state.can_retry_pipeline;
         if (state.status === 'failed') throw new Error(`${state.message} 任务目录：${state.directory}`);
         el<HTMLAnchorElement>('result-link').href = state.result;
         el('result-link').hidden = false;
@@ -320,8 +329,10 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         sourceBlob = resultBlob;
         released = false;
         el('scene-name').textContent = 'repaired_scene.ply';
+        showProgress(phase(9, '六步原链路验收通过，结果已加载，可以下载 PLY。', 'complete'));
         status('补洞完成，六步原链路验收通过。结果已加载，也可以下载 PLY。');
     } catch (error) {
+        failProgress(error.message);
         status(error.message, true);
         if (released && view) {
             try {
@@ -354,6 +365,7 @@ async function main() {
     model.replaceChildren(...config.models.map((item: { id: string, label: string }) => new Option(item.label, item.id)));
     const savedModel = localStorage.getItem('repair-studio-model');
     if (config.models.some((item: { id: string }) => item.id === savedModel)) model.value = savedModel;
+    else if (savedModel) localStorage.removeItem('repair-studio-model');
     model.addEventListener('change', () => {
         localStorage.setItem('repair-studio-model', model.value);
         controls();
@@ -391,7 +403,12 @@ async function main() {
     tools = new ToolManager(events);
     tools.register('lassoSelection', new LassoSelection(events, el('tools'), { canvas: maskCanvas, context: maskContext }));
     tools.register('rectSelection', new RectSelection(events, el('tools')));
+    navigation = keyboardNavigation({ win: window, doc: document,
+        fire: (name: string, down: boolean) => events.fire(name, down),
+        canMove: () => Boolean(active) && !busy && !tools.active });
     events.on('tool.activated', (name: string) => {
+        navigation.clear();
+        events.fire('camera.setControlMode', 'orbit');
         button('lasso').classList.toggle('active', name === 'lassoSelection');
         button('rect').classList.toggle('active', name === 'rectSelection');
         button('orbit').classList.toggle('active', !name);
@@ -403,7 +420,11 @@ async function main() {
         const input = event.target as HTMLInputElement;
         await openFile(input.files[0]); input.value = '';
     };
-    button('orbit').onclick = () => tools.activate(null);
+    button('orbit').onclick = () => {
+        navigation.clear();
+        tools.activate(null);
+        events.fire('camera.setControlMode', 'orbit');
+    };
     button('lasso').onclick = () => tools.activate('lassoSelection');
     button('rect').onclick = () => tools.activate('rectSelection');
     button('delete').onclick = async () => { events.fire('select.delete'); await queue.enqueue((): void => {}); controls(); };
@@ -421,9 +442,9 @@ async function main() {
     el<HTMLSelectElement>('resolution').onchange = () => { resizeFrame(); controls(); };
     new ResizeObserver(resizeFrame).observe(el('canvas-container').parentElement);
     document.addEventListener('keydown', event => {
-        if (busy || !active || (event.target as HTMLElement).closest('input, textarea, select')) return;
+        if (busy || !active || event.isComposing || isEditing(event.target) || event.altKey || event.metaKey) return;
         const actions: Record<string, string> = { v: 'orbit', l: 'lasso', f: 'frame', Delete: 'delete', Escape: 'clear' };
-        const id = event.ctrlKey && event.key.toLowerCase() === 'z' ? 'undo' : actions[event.key];
+        const id = event.ctrlKey ? (event.key.toLowerCase() === 'z' ? 'undo' : null) : actions[event.key.length === 1 ? event.key.toLowerCase() : event.key];
         if (id && !button(id).disabled) { event.preventDefault(); button(id).click(); }
     });
     // Keep camera input and wheel events from changing the view while exporting / running.

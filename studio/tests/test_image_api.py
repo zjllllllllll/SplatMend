@@ -97,8 +97,7 @@ class ImageTests(unittest.TestCase):
 
     def test_exact_per_model_2k_sizes_from_company_table(self):
         expected = {"doubao-seedream-5-0-260128": ["2848x1600", "2304x1728", "2048x2048"],
-                    "gpt-image-2": ["2048x1152", "2048x1536", "2048x2048"],
-                    "gemini-3-pro-image-preview": ["2752x1536", "2400x1792", "2048x2048"]}
+                    "gpt-image-2": ["2048x1152", "2048x1536", "2048x2048"]}
         self.assertEqual(set(api.MODELS), set(expected))
         for model, sizes in expected.items():
             actual = [api.model_size(model, *size) for size in [(2560, 1440), (2048, 1536), (2048, 2048)]]

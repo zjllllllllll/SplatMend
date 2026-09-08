@@ -28,7 +28,7 @@ from studio import oss_input
 ENDPOINT_HOST = "oneapi.qunhequnhe.com"
 ENDPOINT_PATH = "/v1/images/edits"
 IMAGE_LIMIT = 32 * 1024 * 1024
-# GPT/Gemini may return base64 despite response_format=url. Bound that JSON too.
+# The gateway may return base64 despite response_format=url. Bound that JSON too.
 JSON_LIMIT = 48 * 1024 * 1024
 PIXEL_LIMIT = 32_000_000
 MODELS = {
@@ -43,12 +43,6 @@ MODELS = {
         "input_transport": "oss_url",
         "response_format": "url",
         "sizes": [(2048, 1152), (2048, 1536), (2048, 2048), (1536, 2048), (1152, 2048)],
-    },
-    "gemini-3-pro-image-preview": {
-        "label": "Gemini 3 Pro · Image",
-        "input_transport": "oss_url",
-        "response_format": "url",
-        "sizes": [(2752, 1536), (2400, 1792), (2048, 2048), (1792, 2400), (1536, 2752)],
     },
 }
 

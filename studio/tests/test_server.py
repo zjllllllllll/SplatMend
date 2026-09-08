@@ -43,7 +43,7 @@ class ServerTests(unittest.TestCase):
         code, headers, raw = self.request(path="/api/config")
         self.assertEqual(code, 200)
         config = json.loads(raw)
-        self.assertEqual(len(config["models"]), 3)
+        self.assertEqual({item["id"] for item in config["models"]}, {"doubao-seedream-5-0-260128", "gpt-image-2"})
         self.assertTrue(config["preflight"]["key_ready"])
         self.assertNotIn(b"SECRET_MUST_NOT_BE_SERVED", raw)
         self.assertEqual(headers["Cache-Control"], "no-store")

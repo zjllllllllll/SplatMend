@@ -3,14 +3,14 @@ import test from 'node:test';
 import { requestOptions } from '../src/model-options.mjs';
 
 const gpt = { input_transport: 'oss_url', sizes: [[2048, 1152], [2048, 1536], [2048, 2048]] };
-const gemini = { input_transport: 'oss_url', sizes: [[2752, 1536], [2400, 1792], [2048, 2048]] };
+const seedream = { input_transport: 'data_url', sizes: [[2848, 1600], [2304, 1728], [2048, 2048]] };
 
 test('changing the model changes output size without changing original dimensions', () => {
     assert.equal(requestOptions(gpt, 2560, 1440, true).size, '2048x1152');
-    assert.equal(requestOptions(gemini, 2560, 1440, true).size, '2752x1536');
+    assert.equal(requestOptions(seedream, 2560, 1440, true).size, '2848x1600');
     assert.equal(requestOptions(gpt, 2048, 1536, true).size, '2048x1536');
-    assert.equal(requestOptions(gemini, 2048, 1536, true).size, '2400x1792');
-    assert.ok(requestOptions(gemini, 2048, 1536, true).ready);
+    assert.equal(requestOptions(seedream, 2048, 1536, true).size, '2304x1728');
+    assert.ok(requestOptions(seedream, 2048, 1536, true).ready);
 });
 
 test('missing OSS blocks only models which require it', () => {

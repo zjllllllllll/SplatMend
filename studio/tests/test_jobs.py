@@ -64,6 +64,36 @@ class JobTests(unittest.TestCase):
         np.testing.assert_array_equal(base, self.vertex[[0, 2]])
         self.assertEqual(self.manager.state(job_id)["deleted_count"], 1)
 
+    def test_retired_models_cannot_submit_or_retry_but_history_is_preserved(self):
+        from studio.image_api import ImageAPIError, model_preflight
+        job_id, folder = self.new_job()
+        self.manager.update(job_id, model="retired-image-model")
+        with patch("studio.jobs.model_preflight", side_effect=model_preflight), patch("studio.jobs.threading.Thread") as thread:
+            with self.assertRaises(ImageAPIError):
+                self.manager.submit(job_id)
+            self.manager.update(job_id, status="failed", image_ready=True, can_retry_pipeline=True, can_retry_download=True)
+            with self.assertRaises(ValueError):
+                self.manager.retry_pipeline(job_id)
+            with self.assertRaises(ValueError):
+                self.manager.retry_download(job_id)
+            thread.assert_not_called()
+        self.assertFalse(self.manager.state(job_id)["can_retry_pipeline"])
+        self.assertFalse(self.manager.state(job_id)["can_retry_download"])
+        self.assertTrue((folder / "input" / "point_cloud.png").is_file())
+
+    def test_failure_records_exact_phase_for_progress_without_launching_pipeline(self):
+        from studio.image_api import ImageAPIError
+        for failed_phase in ("validating", "image_api"):
+            job_id, _ = self.new_job()
+            self.manager.update(job_id, status="validating")
+            target = "studio.jobs.repair_image" if failed_phase == "image_api" else "studio.jobs.JobManager._validate_inputs"
+            with patch(target, side_effect=ImageAPIError("mock failure")), patch("studio.jobs.subprocess.Popen") as process:
+                self.manager._run(job_id)
+                process.assert_not_called()
+            state = self.manager.state(job_id)
+            self.assertEqual(state["status"], "failed")
+            self.assertEqual(state["failed_phase"], failed_phase)
+
     def test_camera_contract(self):
         self.assertEqual(validate_camera(camera()), (256, 256))
         bad = camera()

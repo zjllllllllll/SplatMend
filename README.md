@@ -7,7 +7,7 @@
 
 已有本机环境和已构建界面时，双击 `run_studio.cmd`。首次构建运行
 `build_studio.cmd`。提示词从根目录 `prompt.txt` 读取，图片 API 密钥从
-`api_key.txt` 读取；GPT / Gemini 还需一次性配置 OSS 凭据。完整启动、模型尺寸、
+`api_key.txt` 读取；GPT 还需一次性配置 OSS 凭据。完整启动、模型尺寸、
 失败恢复与当前验收状态见 [STUDIO.md](STUDIO.md)。
 
 原数值脚本、模型和 `run_sample.cmd` 参数不变。下文保留原算法、数据契约及
