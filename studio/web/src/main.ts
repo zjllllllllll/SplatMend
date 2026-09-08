@@ -379,7 +379,7 @@ async function main() {
     events.function('selectedClr', () => new Color(0.47, 0.85, 0.69, 0.9));
     events.function('unselectedClr', () => new Color(0, 0, 0, 0));
     events.function('lockedClr', () => new Color(0, 0, 0, 0));
-    registerEditorEvents(events, history, scene);
+    registerEditorEvents(events, history, scene, { areaSelection: 'through' });
     registerSelectionEvents(events, scene);
     events.fire('camera.setMode', 'rings');
     events.fire('view.setOutlineSelection', true);

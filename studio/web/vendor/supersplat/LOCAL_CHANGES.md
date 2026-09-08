@@ -11,3 +11,11 @@ LingBot numerical pipeline or model sources.
 - Regression coverage: `studio/web/tests/lasso.test.mjs` runs the actual bundled
   controller against a Node DOM stub. It does not perform browser automation,
   cloud uploads, or image generation.
+- `src/editor.ts`: optional `areaSelection: 'through'` decouples lasso/rectangle
+  hit testing from the visual `rings` overlay. Studio enables it to select every
+  projected Gaussian center inside the region, including occluded layers, using
+  the existing GPU intersection path. Visible single-point picking, original
+  callers' defaults, protected state bits, deletion and undo are unchanged.
+- `studio/web/tests/area-selection.test.mjs` reproduces the old visible-only
+  failure and tests both area routes, overlapping layers, modifiers, deletion,
+  undo/redo and protected state bits with actual editor/history/state operations.

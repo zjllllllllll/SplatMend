@@ -16,7 +16,8 @@ const removeExtension = (filename: string) => {
 };
 
 // register for editor and scene events
-const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: Scene) => {
+const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: Scene,
+    options: { areaSelection?: 'visible' | 'through' } = {}) => {
     const vec = new Vec3();
     const vec2 = new Vec3();
     const vec4 = new Vec4();
@@ -428,7 +429,9 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     });
 
     events.function('select.rect', async (op: 'add'|'remove'|'set'|'intersect', rect: any) => {
-        const mode = events.invoke('camera.mode');
+        // Studio uses through-area selection independently of the visual rings
+        // overlay. Visible ID picking can return only one overlapping layer.
+        const mode = options.areaSelection === 'through' ? 'centers' : events.invoke('camera.mode');
 
         for (const splat of selectedSplats()) {
             if (mode === 'centers') {
@@ -453,7 +456,7 @@ const registerEditorEvents = (events: Events, editHistory: EditHistory, scene: S
     let maskTexture: Texture = null;
 
     events.function('select.byMask', async (op: 'add'|'remove'|'set'|'intersect', canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) => {
-        const mode = events.invoke('camera.mode');
+        const mode = options.areaSelection === 'through' ? 'centers' : events.invoke('camera.mode');
 
         for (const splat of selectedSplats()) {
             if (mode === 'centers') {
