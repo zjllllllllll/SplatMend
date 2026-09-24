@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from studio import image_api, oss_input
+from studio import image_api
 from studio.jobs import atomic_json, digest
 from studio.lifecycle import process_identity
 from studio.server import StudioServer
@@ -23,7 +23,6 @@ def main():
     parser.add_argument("mode", choices=("image_api", "pipeline"))
     args = parser.parse_args()
     image_api.post_edit = forbidden
-    oss_input.upload_png = forbidden
     server = StudioServer(("127.0.0.1", 0), args.root)
     job_id = "f" * 32
     folder = server.manager.jobs / job_id

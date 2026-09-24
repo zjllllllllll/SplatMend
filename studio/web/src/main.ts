@@ -42,7 +42,7 @@ let token = '';
 let busy = false;
 let apiReady = false;
 let modelProfiles: ModelProfile[] = [];
-let ossReady = false;
+let keysReady: Record<string, boolean> = {};
 let active: Splat = null;
 let source: SceneInfo = null;
 let sourceBlob: Blob = null;
@@ -105,7 +105,7 @@ function controls() {
 function modelOptions() {
     const selected = modelProfiles.find(item => item.id === el<HTMLSelectElement>('model').value);
     const [width, height] = el<HTMLSelectElement>('resolution').value.split(',').map(Number);
-    const options = requestOptions(selected, width, height, ossReady);
+    const options = requestOptions(selected, width, height, Boolean(keysReady[selected?.id]));
     el('model-options').textContent = options.message;
     el('model-options').classList.toggle('error', !options.ready);
     return options;
@@ -213,9 +213,9 @@ async function startRepair() {
         // Recheck key status before GPU capture or any job creation.
         const config = await api('/api/config');
         token = config.token;
-        if (!config.preflight.key_ready) throw new Error('API key is missing. Set api_key.txt and retry.');
+        if (!config.preflight.key_ready) throw new Error('API 密钥缺失，请配置 ark-key.txt 或 grs-key.txt。');
         modelProfiles = config.models;
-        ossReady = config.preflight.oss.ready;
+        keysReady = config.preflight.keys_ready;
         const options = modelOptions();
         if (!options.ready) throw new Error(options.message);
         status('已锁定视角，正在导出带洞图片、深度和相机参数…');
@@ -361,7 +361,7 @@ async function main() {
     token = config.token;
     const model = el<HTMLSelectElement>('model');
     modelProfiles = config.models;
-    ossReady = config.preflight.oss.ready;
+    keysReady = config.preflight.keys_ready;
     model.replaceChildren(...config.models.map((item: { id: string, label: string }) => new Option(item.label, item.id)));
     const savedModel = localStorage.getItem('repair-studio-model');
     if (config.models.some((item: { id: string }) => item.id === savedModel)) model.value = savedModel;
@@ -455,7 +455,7 @@ async function main() {
     }
     scene.start();
     controls();
-    status(apiReady ? '打开 PLY 文件开始。' : '请检查模型文件和 api_key.txt，然后刷新页面。');
+    status(apiReady ? '打开 PLY 文件开始。' : '请检查模型文件和 API 密钥，然后刷新页面。');
     const restoreId = rememberedJob(config.active_job, window.location.search, sessionStorage.getItem('repair-studio-job'));
     if (restoreId) await followJob(restoreId);
 }

@@ -25,3 +25,5 @@ Thumbs.db
 # Model weights are supplied locally and are intentionally not uploaded.
 third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt
 third_party/lingbot-depth/model/lingbot-depth/model.pt
+ark-key.txt
+grs-key.txt

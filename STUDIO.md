@@ -18,10 +18,10 @@
 `build_studio.cmd`。它用锁文件安装前端依赖并构建界面，不安装或替换任何
 Python/CUDA 依赖。修改前端源码后需要重新构建和刷新浏览器。
 
-密钥放在 checkout 根目录 `api_key.txt`，只包含密钥本身。这个文件已被 Git
-忽略。工具优先读取该文件；仅当文件不存在时才读取 `CLICKGS_IMAGE_API_KEY`。
-这样旧终端/Codex 进程继承的环境变量不会覆盖当前工程的新密钥。
-密钥不显示在界面，不进入命令行、任务 JSON、日志或 Git。
+图片 API 密钥分别放在根目录 `ark-key.txt`（火山引擎 Seedream）和
+`grs-key.txt`（GrsAI GPT Image 2），文件只包含密钥本身，均由 Git 忽略。
+文件优先于环境变量 `ARK_API_KEY` / `GRSAI_API_KEY`。旧 `api_key.txt`
+不再用于当前接口。工作台不展示密钥，也不把密钥写入任务文件或日志。
 
 `prompt.txt` 是默认提示词，支持中文和 Unicode 标点。界面内修改只影响本次
 提交的任务，不改写文件。默认使用用户提供的通用受约束 3DGS 补洞提示词，按
@@ -102,66 +102,21 @@ Viewer 使用本地固定版本 SuperSplat 的渲染和选点模块，不加载�
 
 ## 模型与网络
 
-图片编辑统一使用公司接口：
-`https://oneapi.qunhequnhe.com/v1/images/edits`。
-统一使用 `images[].image_url`。豆包保留已验证的内存 Base64 PNG Data URL；
-GPT 按用户参考脚本先上传私有 OSS，再传临时 HTTPS URL。
-不会把请求体、输入 Base64、签名 URL 或完整响应 JSON 写入磁盘。
+当前仅支持两个模型，不自动切换提供商：
 
-模型选择包括：
-
-- `doubao-seedream-5-0-260128`
-- `gpt-image-2`
-
-这些名称来自用户参考脚本，2K 尺寸来自用户提供的公司 API 文档。实际可用性取决于密钥的
-模型权限和网关状态。不会自动改模型、重命名模型或退回其他外观后端。
-
-| 模型 | 16:9 请求输出 | 4:3 请求输出 | 1:1 请求输出 |
+| 模型 | API 地址 | 密钥文件 | 输入方式 |
 |---|---|---|---|
-| Seedream 5.0 固定 ID | 2848×1600 | 2304×1728 | 2048×2048 |
-| GPT Image 2 | 2048×1152 | 2048×1536 | 2048×2048 |
+| `doubao-seedream-5-0-260128` | `https://ark.cn-beijing.volces.com/api/v3/images/generations` | `ark-key.txt` | PNG Data URL |
+| `gpt-image-2` | `https://grsai.dakka.com.cn/v1/api/generate` | `grs-key.txt` | PNG Data URL |
 
-这是输出 `size`，不是强制的上传原图尺寸。界面与后端共用同一模型配置表，
-切换模型后显示原图尺寸、API 输出尺寸及上传方式；不支持的组合在上传和付费前
-拦截。API 返回图再恢复到原始锁定尺寸，不改变相机、深度或几何算法。
-GPT 上传仅移除 PNG 的 Alpha 通道，RGB 像素与坐标不变；原始 RGBA
-仍完整保存在 input/，原算法继续从其 Alpha 定义空洞。请求不发送 mask。
-两种模型均按参考脚本请求 `response_format=url`、`output_format=png`、`n=1`，
-也能解析服务端意外返回的 `b64_json`。
+Seedream 请求单张图片、关闭组图与水印，并使用火山引擎流式响应。GrsAI 使用 `images`、`aspectRatio`
+和 `replyType=async`，按普通 `gpt-image-2` 支持的比例提交；返回任务 ID 后只查询结果，不重复提交生成请求。
+两者都以 Bearer Key 鉴权。输出图经尺寸与比例检查后恢复到锁定视图尺寸。
+对超过 2% 比例误差、损坏图、动画图及超限图直接拒绝。
 
-输入图片最多 32 MiB、单边 8192、32M 像素是本工具的解码安全上限，不是两家
-模型的官方输入规格声明。当前 UI 只导出表中三种视图比例，渲染上限仍由原工具
-相机契约限定。公司文档未列出的模型输入限制不猜测、不自动缩图或裁切绕过。
-
-Gemini 已按用户要求移除：不再出现在选项、尺寸表或 API 路由中。旧任务保留只读
-诊断和图片，不自动映射到其他模型，也不能通过提交或重试入口恢复已移除模型。
-
-### GPT 的 OSS 配置
-
-使用参考脚本相同的杭州 Bucket `fengshuiimgs`，专用前缀
-`ai-enhance-input/gaussian-repair/`。配置 `OSS_ACCESS_KEY_ID` 与
-`OSS_ACCESS_KEY_SECRET`；STS 临时凭据还要 `OSS_SESSION_TOKEN`。先读取完整的
-进程凭据集；全部未设置时再读取 Windows 用户环境变量，避免旧 IDE 未继承新
-变量的问题。不会混用两套凭据，不在界面输入或保存密钥。
-
-只需该前缀的 `oss:PutObject` / `oss:GetObject` 权限。上传对象为私有、随机名字、
-禁止覆盖；不修改 Bucket 策略。签名链接默认约 1 小时；STS 若提前失效，链接也会
-提前失效。链接过期不会删除云端图片，未自动设置生命周期或执行云端清理。
-上传一次后才调用生成，下载重试不重新上传或生图。上传失败不调用模型，错误
-只显示安全的 OSS 错误码。已收到账户配置不代表云端权限一定可用。
-
-新增固定依赖仅为 `alibabacloud-oss-v2==1.4.0`、`crcmod-plus==2.3.1`、
-`pycryptodome==3.23.0`，未修改已有 CUDA 栈。实现使用
-[阿里云官方上传接口](https://help.aliyun.com/zh/oss/developer-reference/simple-upload-using-oss-sdk-for-python-v2)
-与[预签名下载接口](https://help.aliyun.com/zh/oss/developer-reference/download-an-object-using-a-signed-url-generated-with-oss-sdk-for-python-v2)。
-
-输出先校正 EXIF 方向，拒绝损坏、超大或动画图片。比例误差不超过 2% 才
-精确缩放；超过则报错，不裁剪、不拉伸。透明输出合成到原支持图。
-只对明确的 HTTP 429/502/503/504 做有限重试；超时或断线不自动重复生图。
-下载仅允许公网 HTTP(S)，连接绑定已检查的 IP，逐次检查重定向；下载请求
-绝不携带公司的 API Authorization。返回 Base64 时也有严格大小限制。
-文档中的 HTTP CDN 链接先升级为 HTTPS，保留路径和签名参数；拒绝 HTTPS 降级
-重定向。HTTPS 使用正确的默认 Host 头及 TLS 主机名，错误只显示主机，不显示签名 URL。
+输入图片会发往所选外部服务；不再上传公司 OSS。生成结果的下载不附带
+API 密钥，并校验地址、TLS 主机名和重定向。仅对 HTTP 429 做有限重试；其他非 200 响应和断线不重复生成。运行产物不保存请求 Base64
+或完整 API 响应。Gemini 已移除，历史任务保留只读诊断。
 
 ## 任务与诊断文件
 
@@ -276,11 +231,37 @@ npm.cmd run build
 三维结果未通过原深度验收，该失败记录保留，不宣称三种模型都已端到端成功。
 完整自由圈选的真人交互可在使用时验收；自动化覆盖范围如上，不伪称已完成真人操作。
 
-当前工作台可直接使用，入口是根目录 `run_studio.cmd`；当前服务为
-`http://127.0.0.1:8765`。原六步算法、权重和用户原始场景保持不变；默认提示词已按
-后续用户请求更新，Gemini 已移除。上述三模型测试仅为移除前的历史验收记录。
-从其他终端启动时，豆包可直接读取根目录 `api_key.txt`；GPT 另外依赖
-OSS 凭据。当前进程已有，但 Windows 用户和系统环境均未持久化这组凭据，需按
-上方 OSS 配置章节配置一次。没有擅自把凭据写入注册表或提交进 Git。
+以上是 2026-09-08 的历史交付记录。当前入口仍为 `run_studio.cmd`，
+密钥和接口以“模型与网络”章节为准；当时的公司网关、OSS 和服务进程状态
+不代表当前配置。
 
-代码仅在本地 `feature/end-to-end-inpainting` 分支交付；未推送 GitLab。
+## 2026-09-24 提供商切换与真实验收
+
+GPT Image 2 已切换至 GrsAI，Seedream 已切换至火山引擎，旧 OSS 接入已移除。
+本地通过 63 项 Python 测试、26 项前端测试、TypeScript 检查和前端构建。
+工作台本地启动后能识别两个模型、两份密钥和所需模型文件。
+
+GrsAI 早期请求曾遇到图片 CDN 下载受阻、响应断线和 180 秒超时；这些不确定
+请求均未自动重复提交。随后按普通 `gpt-image-2` 支持的 `aspectRatio=16:9` 和
+`replyType=async` 重新实际提交，成功取得 1672×941 图片并规范化为 2560×1440。
+新图保存在 `outputs/provider_validation/grsai/repaired_rgb.png`。以此图和原
+`assets` 样本运行 `run_sample.cmd`，六步均通过并输出 `PIPELINE_ACCEPTED`：
+洞内深度覆盖率 100%，新增 76,253 个高斯点，原 2,252,716 个点全部保留。
+验收报告为 `outputs/provider_validation/grsai/pipeline/sample_acceptance.json`，
+最终 PLY 为 `outputs/provider_validation/grsai/pipeline/fusion/depth_anchored_inpainted.ply`。
+
+用户另行授权的一次火山引擎 Seedream 流式生图成功，返回的新图保存在
+`outputs/provider_validation/volcengine/repaired_rgb.png`。以此图和原 `assets`
+样本运行 `run_sample.cmd`，六步均通过并输出 `PIPELINE_ACCEPTED`：洞内深度
+覆盖率 100%，新增 76,253 个高斯点，原 2,252,716 个点全部保留。
+验收报告为 `outputs/provider_validation/volcengine/pipeline/sample_acceptance.json`，
+最终 PLY 为 `outputs/provider_validation/volcengine/pipeline/fusion/depth_anchored_inpainted.ply`。
+这些运行产物位于 Git 忽略的 `outputs/`，不随源码上传。
+
+最终复核：两家新接口的输入、原始返回图和规范化图 SHA-256 均与各自 manifest
+一致；两份结果均由原验收器再次输出 `SAMPLE_ACCEPTED`。Python 63 项、前端
+26 项测试、TypeScript 检查和前端生产构建通过。以上证明本机仓库样例的真实
+图片 API 与六步数值链路；本轮未重新进行浏览器交互和人工视觉效果验收。
+
+历史保存图 `assets/repaired_rgb.png` 的复跑结果另在
+`outputs/demo/sample_acceptance.json`，不作为新接口验收证据。

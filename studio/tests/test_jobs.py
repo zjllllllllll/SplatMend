@@ -26,7 +26,7 @@ class JobTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.manager = JobManager(self.root)
-        self.key = patch.dict("os.environ", {"CLICKGS_IMAGE_API_KEY": "TEST_SECRET_DO_NOT_PERSIST"})
+        self.key = patch.dict("os.environ", {"GRSAI_API_KEY": "TEST_SECRET_DO_NOT_PERSIST"})
         self.key.start()
         self.addCleanup(self.key.stop)
         ready = patch("studio.jobs.model_preflight")
@@ -122,7 +122,7 @@ class JobTests(unittest.TestCase):
 
     def test_missing_key_creates_no_job(self):
         before = list(self.manager.jobs.iterdir())
-        with patch.dict("os.environ", {"CLICKGS_IMAGE_API_KEY": ""}), patch.object(self.manager, "preflight", return_value={"missing_files": [], "disk_free_gb": 100}):
+        with patch.dict("os.environ", {"GRSAI_API_KEY": ""}), patch.object(self.manager, "preflight", return_value={"missing_files": [], "disk_free_gb": 100}):
             with self.assertRaises(RuntimeError):
                 self.manager.create({"scene_id": self.scene_id, "model": "gpt-image-2", "prompt": "repair", "camera": camera()})
         self.assertEqual(before, list(self.manager.jobs.iterdir()))
@@ -130,8 +130,8 @@ class JobTests(unittest.TestCase):
     def test_missing_oss_creates_no_job(self):
         from studio.image_api import ImageAPIError
         before = list(self.manager.jobs.iterdir())
-        with patch("studio.jobs.model_preflight", side_effect=ImageAPIError("OSS not configured")):
-            with self.assertRaisesRegex(ImageAPIError, "OSS"):
+        with patch("studio.jobs.model_preflight", side_effect=ImageAPIError("provider not configured")):
+            with self.assertRaisesRegex(ImageAPIError, "provider"):
                 self.new_job()
         self.assertEqual(before, list(self.manager.jobs.iterdir()))
 

@@ -19,7 +19,7 @@ class ServerTests(unittest.TestCase):
         dist = self.root / "studio" / "web" / "dist"
         dist.mkdir(parents=True)
         (dist / "index.html").write_text("<html>local viewer</html>")
-        (self.root / "api_key.txt").write_text("SECRET_MUST_NOT_BE_SERVED")
+        (self.root / "grs-key.txt").write_text("SECRET_MUST_NOT_BE_SERVED")
         self.server = StudioServer(("127.0.0.1", 0), self.root)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -56,7 +56,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/jobs", b"{}", {"X-Studio-Token": "incorrect"})[0], 403)
 
     def test_traversal_private_files_and_oversized_json_rejected(self):
-        for path in ["/api_key.txt", "/../../api_key.txt", "/%2e%2e/%2e%2e/api_key.txt", "/.git/config", "/api/jobs/../../api_key.txt"]:
+        for path in ["/grs-key.txt", "/ark-key.txt", "/../../grs-key.txt", "/%2e%2e/%2e%2e/grs-key.txt", "/.git/config", "/api/jobs/../../api_key.txt"]:
             code, _, raw = self.request(path=path)
             self.assertNotEqual(code, 200, path)
             self.assertNotIn(b"SECRET_MUST_NOT_BE_SERVED", raw)

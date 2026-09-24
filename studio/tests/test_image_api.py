@@ -30,6 +30,9 @@ class Response:
     def read(self, size=-1):
         return self.stream.read(size)
 
+    def readline(self, size=-1):
+        return self.stream.readline(size)
+
 
 class Connection:
     def __init__(self, response):
@@ -91,54 +94,80 @@ class ImageTests(unittest.TestCase):
     def test_all_models_support_view_sizes(self):
         for model in api.MODELS:
             for width, height in [(2560, 1440), (2048, 1536), (2048, 2048)]:
-                self.assertIn("x", api.model_size(model, width, height))
+                self.assertIn(":" if model == "gpt-image-2" else "x", api.model_size(model, width, height))
         with self.assertRaises(api.ImageAPIError):
             api.model_size("not-a-model", 100, 100)
 
-    def test_exact_per_model_2k_sizes_from_company_table(self):
+    def test_provider_supported_aspect_ratios_and_sizes(self):
         expected = {"doubao-seedream-5-0-260128": ["2848x1600", "2304x1728", "2048x2048"],
-                    "gpt-image-2": ["2048x1152", "2048x1536", "2048x2048"]}
+                    "gpt-image-2": ["16:9", "4:3", "1:1"]}
         self.assertEqual(set(api.MODELS), set(expected))
         for model, sizes in expected.items():
             actual = [api.model_size(model, *size) for size in [(2560, 1440), (2048, 1536), (2048, 2048)]]
             self.assertEqual(actual, sizes)
 
-    def test_checkout_key_wins_over_stale_environment(self):
+    def test_provider_keys_are_separate_and_local_files_win(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "api_key.txt").write_text("FILE_KEY", encoding="utf-8")
-            with patch.dict("os.environ", {"CLICKGS_IMAGE_API_KEY": "STALE_KEY"}):
-                self.assertEqual(api.read_key(root), "FILE_KEY")
-                (root / "api_key.txt").write_text("", encoding="utf-8")
+            (root / "grs-key.txt").write_text("GRS_FILE_KEY", encoding="utf-8")
+            (root / "ark-key.txt").write_text("ARK_FILE_KEY", encoding="utf-8")
+            with patch.dict("os.environ", {"GRSAI_API_KEY": "STALE_GRS", "ARK_API_KEY": "STALE_ARK"}):
+                self.assertEqual(api.read_key(root, "gpt-image-2"), "GRS_FILE_KEY")
+                self.assertEqual(api.read_key(root, "doubao-seedream-5-0-260128"), "ARK_FILE_KEY")
+                (root / "grs-key.txt").write_text("", encoding="utf-8")
                 with self.assertRaises(api.ImageAPIError):
-                    api.read_key(root)
+                    api.read_key(root, "gpt-image-2")
+                self.assertEqual(api.read_key(root, "doubao-seedream-5-0-260128"), "ARK_FILE_KEY")
 
 
 class NetworkTests(unittest.TestCase):
-    def setUp(self):
-        ready = patch.object(api.oss_input, "check_ready")
-        ready.start()
-        self.addCleanup(ready.stop)
-        upload = patch.object(api.oss_input, "upload_png", return_value="https://example.com/input.png?sign=PRIVATE_INPUT")
-        self.upload = upload.start()
-        self.addCleanup(upload.stop)
-
     def post(self, responses):
         connections = [Connection(response) for response in responses]
         factory = Mock(side_effect=connections)
         sleeper = Mock()
-        result = api.post_edit({"model": "test"}, "TEST_SECRET", connection_factory=factory, sleep=sleeper)
+        result = api.post_edit({"model": "doubao-seedream-5-0-260128"}, "TEST_SECRET", connection_factory=factory, sleep=sleeper)
         return result, connections, sleeper
 
     def test_post_success(self):
         result, connections, _ = self.post([Response(body=b'{"data":[{"url":"https://example.com/image.png"}]}')])
         self.assertEqual(len(result["data"]), 1)
         request = connections[0].request.call_args.args
-        self.assertEqual(request[0:2], ("POST", api.ENDPOINT_PATH))
+        self.assertEqual(request[0:2], ("POST", api.ENDPOINTS["doubao-seedream-5-0-260128"][1]))
         self.assertEqual(request[3]["Authorization"], "Bearer TEST_SECRET")
 
+    def test_volcengine_stream_returns_first_completed_image(self):
+        event = b'data: {"type":"image_generation.partial_succeeded","url":"https://example.com/result.png"}\n\n'
+        connection = Connection(Response(body=event, headers={"Content-Type": "text/event-stream"}))
+        result = api.post_edit({"model": "doubao-seedream-5-0-260128", "stream": True}, "TEST_SECRET",
+                               connection_factory=Mock(return_value=connection))
+        self.assertEqual(result["data"][0]["url"], "https://example.com/result.png")
+        self.assertEqual(connection.request.call_args.args[1], api.ENDPOINTS["doubao-seedream-5-0-260128"][1])
+
+    def test_grsai_completed_and_pending_responses(self):
+        completed = {"id": "task-1", "status": "succeeded", "results": [{"url": "https://file1.aitohumanize.com/x.png"}]}
+        connection = Connection(Response(body=json.dumps(completed).encode()))
+        result = api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=Mock(return_value=connection))
+        self.assertEqual(result, completed)
+        self.assertEqual(connection.request.call_args.args[1], api.ENDPOINTS["gpt-image-2"][1])
+        pending = {"id": "task-1", "status": "running"}
+        factory = Mock(side_effect=[Connection(Response(body=json.dumps(pending).encode())),
+                                    Connection(Response(body=json.dumps(completed).encode()))])
+        self.assertEqual(api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory, sleep=Mock()), completed)
+        self.assertEqual(factory.call_count, 2)
+        self.assertEqual(factory.call_args_list[1].args[0], api.ENDPOINTS["gpt-image-2"][0])
+
+    def test_grsai_result_and_proxy_cdn_restriction(self):
+        raw = png()
+        url = "https://file1.aitohumanize.com/image.png"
+        self.assertEqual(api.result_bytes({"results": [{"url": url}]}, download=lambda _: raw), raw)
+        self.assertTrue(api._allowed_download_ip("file1.aitohumanize.com", "198.18.0.88"))
+        self.assertTrue(api._allowed_download_ip("ark-content-generation-v2-cn-beijing.tos-cn-beijing.volces.com", "198.18.0.88"))
+        self.assertFalse(api._allowed_download_ip("other.tos-cn-beijing.volces.com", "198.18.0.88"))
+        self.assertFalse(api._allowed_download_ip("internal.example", "198.18.0.88"))
+        self.assertFalse(api._allowed_download_ip("file1.aitohumanize.com", "127.0.0.1"))
+
     def test_retry_only_explicit_transient_statuses(self):
-        for code in (429, 502, 503, 504):
+        for code in (429,):
             _, connections, sleep = self.post([Response(code), Response(code), Response()])
             self.assertEqual(len(connections), 3)
             self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 5])
@@ -146,11 +175,11 @@ class NetworkTests(unittest.TestCase):
         sleep.assert_called_once_with(30)
 
     def test_permanent_http_failures_do_not_retry(self):
-        for code in (400, 401, 403, 500, 302):
+        for code in (400, 401, 403, 500, 502, 503, 504, 302):
             connection = Connection(Response(code))
             factory = Mock(return_value=connection)
             with self.assertRaises(api.ImageAPIError):
-                api.post_edit({}, "TEST_SECRET", connection_factory=factory)
+                api.post_edit({"model": "doubao-seedream-5-0-260128"}, "TEST_SECRET", connection_factory=factory)
             self.assertEqual(factory.call_count, 1)
 
     def test_gateway_error_details_are_bounded_and_redacted(self):
@@ -158,7 +187,7 @@ class NetworkTests(unittest.TestCase):
                           "message": "Bad size. TEST_SECRET Bearer hidden sk-hidden https://host/private?sig=hidden data:image/png;base64," + "A" * 100}}
         factory = Mock(return_value=Connection(Response(500, json.dumps(body).encode())))
         with self.assertRaises(api.ImageAPIError) as caught:
-            api.post_edit({}, "TEST_SECRET", connection_factory=factory)
+            api.post_edit({"model": "doubao-seedream-5-0-260128"}, "TEST_SECRET", connection_factory=factory)
         text = str(caught.exception)
         self.assertIn("unsupported_size", text)
         self.assertIn("Bad size", text)
@@ -172,7 +201,7 @@ class NetworkTests(unittest.TestCase):
             self.assertIn("upstream unavailable", message)
         self.assertIn("non-JSON", api._error_summary(Response(body=b"<html>Bad Gateway</html>"), "SECRET"))
 
-    def test_model_specific_inputs_and_formats_match_reference(self):
+    def test_provider_specific_bodies_and_no_secret_persistence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.png"
@@ -183,29 +212,23 @@ class NetworkTests(unittest.TestCase):
                     api.repair_image(source, root / model, model, "repair", "SECRET")
                 body = post.call_args.args[0]
                 self.assertEqual(body["model"], model)
-                self.assertEqual(body["response_format"], "url")
-                if model == "doubao-seedream-5-0-260128":
-                    self.assertTrue(body["images"][0]["image_url"].startswith("data:image/png;base64,"))
+                if model == "gpt-image-2":
+                    self.assertTrue(body["images"][0].startswith("data:image/png;base64,"))
+                    self.assertEqual(body["aspectRatio"], "1:1")
+                    self.assertEqual(body["replyType"], "async")
                 else:
-                    self.assertEqual(body["images"][0]["image_url"], self.upload.return_value)
-                    with Image.open(io.BytesIO(self.upload.call_args.args[0])) as image:
-                        self.assertEqual(image.mode, "RGB")
-                        self.assertEqual(image.size, (100, 100))
-                        self.assertEqual(image.getpixel((0, 0)), (40, 80, 120))
+                    self.assertTrue(body["image"].startswith("data:image/png;base64,"))
+                    self.assertEqual(body["size"], "2048x2048")
+                    self.assertFalse(body["watermark"])
                 for record in (root / model).glob("*.json"):
-                    self.assertNotIn("PRIVATE_INPUT", record.read_text())
+                    self.assertNotIn("SECRET", record.read_text())
+                    self.assertNotIn("data:image", record.read_text())
 
-    def test_bad_input_or_oss_failure_never_calls_generation(self):
+    def test_invalid_input_never_calls_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "input.png"
             source.write_bytes(png((160, 100)))
-            with patch.object(api, "post_edit") as post, self.assertRaises(api.ImageAPIError):
-                api.repair_image(source, root / "out", "gpt-image-2", "repair", "SECRET")
-            post.assert_not_called()
-            self.upload.assert_not_called()
-            source.write_bytes(png())
-            self.upload.side_effect = api.ImageAPIError("OSS unavailable")
             with patch.object(api, "post_edit") as post, self.assertRaises(api.ImageAPIError):
                 api.repair_image(source, root / "out", "gpt-image-2", "repair", "SECRET")
             post.assert_not_called()
@@ -220,14 +243,14 @@ class NetworkTests(unittest.TestCase):
         for error in (socket.timeout("SECRET_URL"), ConnectionResetError("SECRET_URL"), socket.gaierror("SECRET_URL")):
             factory = Mock(return_value=Connection(error))
             with self.assertRaises(api.ImageAPIError) as caught:
-                api.post_edit({}, "TEST_SECRET", connection_factory=factory)
+                api.post_edit({"model": "doubao-seedream-5-0-260128"}, "TEST_SECRET", connection_factory=factory)
             self.assertEqual(factory.call_count, 1)
             self.assertNotIn("SECRET", str(caught.exception))
 
     def test_retry_limit(self):
-        factory = Mock(side_effect=[Connection(Response(503)) for _ in range(3)])
+        factory = Mock(side_effect=[Connection(Response(429)) for _ in range(3)])
         with self.assertRaises(api.ImageAPIError):
-            api.post_edit({}, "TEST_SECRET", connection_factory=factory, sleep=Mock())
+            api.post_edit({"model": "doubao-seedream-5-0-260128"}, "TEST_SECRET", connection_factory=factory, sleep=Mock())
         self.assertEqual(factory.call_count, 3)
 
     def test_bad_json_and_bounded_responses(self):
@@ -328,7 +351,6 @@ class NetworkTests(unittest.TestCase):
                 with self.assertRaisesRegex(api.ImageAPIError, "changed"):
                     api.repair_image(source, root / "out", "gpt-image-2", "different", "SECRET", result_cache=cache)
             post.assert_called_once()
-            self.upload.assert_called_once()
             self.assertEqual(download.call_count, 2)
             for path in (root / "out").glob("*.json"):
                 self.assertNotIn("PRIVATE", path.read_text())

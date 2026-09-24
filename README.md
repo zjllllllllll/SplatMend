@@ -6,12 +6,12 @@
 或手动整理每次任务的图片、深度、相机及 PLY。
 
 已有本机环境和已构建界面时，双击 `run_studio.cmd`。首次构建运行
-`build_studio.cmd`。提示词从根目录 `prompt.txt` 读取，图片 API 密钥从
-`api_key.txt` 读取；GPT 还需一次性配置 OSS 凭据。完整启动、模型尺寸、
+`build_studio.cmd`。提示词从根目录 `prompt.txt` 读取。Seedream 使用 `ark-key.txt`（火山引擎），
+GPT Image 2 使用 `grs-key.txt`（GrsAI）；两者均不使用 OSS。完整启动、模型尺寸、
 失败恢复与当前验收状态见 [STUDIO.md](STUDIO.md)。
 
 原数值脚本、模型和 `run_sample.cmd` 参数不变。下文保留原算法、数据契约及
-手工运行说明，供复现与诊断使用。当前仅本地交付，未推送 GitLab；上传另行按用户指示执行。
+手工运行说明，供复现与诊断使用。当前图片 API 路由已改为火山引擎与 GrsAI；Git 推送按用户指示执行。
 
 本仓库是当前已验证的补洞链路最小工程版：在一个带洞视角中合成修复 RGB，用 LingBot 补齐相机深度，再让 SHARP 在生成阶段直接接受这张完整深度；最后按二维洞区与六级边缘带裁出 SHARP 高斯，并原位追加到原场景。链路不再做 ICP、生成后深度缩放、整体平移或 Poisson 后校正。
 

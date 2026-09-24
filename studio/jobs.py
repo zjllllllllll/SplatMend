@@ -18,7 +18,6 @@ from PIL import Image
 from plyfile import PlyData, PlyElement
 
 from studio.image_api import ImageAPIError, ImageDownloadError, MODELS, decode_image, model_size, model_preflight, read_key, repair_image, validate_prompt
-from studio import oss_input
 from studio.diagnostics import depth_rejection_message
 from studio.lifecycle import matching_job_processes, process_alive, process_identity
 
@@ -197,13 +196,15 @@ class JobManager:
         required = [*BASELINE_FILES, "third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt",
                     "third_party/lingbot-depth/model/lingbot-depth/model.pt"]
         missing = [name for name in required if not (self.root / name).is_file()]
-        try:
-            read_key(self.root)
-            key_ready = True
-        except ImageAPIError:
-            key_ready = False
-        return {"missing_files": missing, "key_ready": key_ready,
-                "oss": oss_input.preflight(),
+        keys_ready = {}
+        for model in MODELS:
+            try:
+                read_key(self.root, model)
+                keys_ready[model] = True
+            except ImageAPIError:
+                keys_ready[model] = False
+        return {"missing_files": missing, "key_ready": any(keys_ready.values()),
+                "keys_ready": keys_ready,
                 "disk_free_gb": round(shutil.disk_usage(self.storage).free / 1e9, 1)}
 
     def register_scene(self, directory: Path, name: str) -> dict:
@@ -228,7 +229,6 @@ class JobManager:
             checks = self.preflight()
             if checks["missing_files"]:
                 raise ValueError("Required local pipeline files or model weights are missing.")
-            read_key(self.root)  # fail before creating a job or uploading the view
             if checks["disk_free_gb"] < 8:
                 raise ValueError("At least 8 GB of free disk space is required for a repair job.")
             scene_id = identifier(request.get("scene_id"))
@@ -241,7 +241,8 @@ class JobManager:
             width, height = validate_camera(request.get("camera"))
             viewer_camera = validate_viewer_camera(request.get("viewer_camera"))
             model_size(model, width, height)
-            model_preflight(model)  # no task creation, upload, or paid POST if unconfigured
+            read_key(self.root, model)  # fail before creating a job or uploading the view
+            model_preflight(model)
             job_id = uuid.uuid4().hex
             folder = self.jobs / job_id
             (folder / "input").mkdir(parents=True)
@@ -409,7 +410,7 @@ class JobManager:
                 if download_only and "result" not in cached:
                     raise ImageAPIError("The cached image link expired. No new generation request was sent.")
                 repaired = repair_image(folder / "input" / "point_cloud.png", folder / "appearance",
-                                        request["model"], request["prompt"], read_key(self.root), result_cache=cached)
+                                        request["model"], request["prompt"], read_key(self.root, request["model"]), result_cache=cached)
             self.image_results.pop(job_id, None)
             self.update(job_id, status="pipeline", image_ready=True, message="Running the existing six-step depth-anchored pipeline.")
             fingerprints = {name: digest(self.root / name) for name in BASELINE_FILES}
