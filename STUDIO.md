@@ -1,6 +1,6 @@
 # 本地端到端补洞工作台
 
-开发分支：`feature/end-to-end-inpainting`。不推送 GitLab，等待用户验收。
+当前开发分支：`main`。本地提交尚未推送 GitLab。
 
 ## 启动
 
