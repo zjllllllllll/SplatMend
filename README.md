@@ -1,11 +1,13 @@
-# Gaussian Repair Studio
+# SplatMend
+
+**Training-Free Hole Filling for Existing 3DGS Scenes**
 
 [English](#english) · [简体中文](#chinese)
 
 <a id="english"></a>
 ## English
 
-Gaussian Repair Studio is a local Windows tool for repairing a hole in a 3D Gaussian Splatting (3DGS) scene. Open a PLY, select and delete an area, lock a camera view, generate a repaired RGB image with an image API, complete depth with LingBot-Depth, and generate an append-only SHARP Gaussian patch. The accepted result loads in the viewer and can be downloaded as a PLY.
+SplatMend is a local Windows tool for repairing a hole in a 3D Gaussian Splatting (3DGS) scene. Open a PLY, select and delete an area, lock a camera view, generate a repaired RGB image with an image API, complete depth with LingBot-Depth, and generate an append-only SHARP Gaussian patch. The accepted result loads in the viewer and can be downloaded as a PLY.
 
 **Platform and limits.** The verified setup is Windows, an NVIDIA RTX 5070 Ti (`sm_120`), CUDA Toolkit 12.8, Visual Studio 2022 Build Tools, and Python 3.13.13. Other GPUs/OSes have not been verified. Image generation uses a third-party provider and may incur charges. Model weights, API keys, local scenes and outputs are not included in Git.
 
@@ -103,7 +105,7 @@ This repository currently has **no project-level LICENSE** for its own code. Cho
 
 **简体中文**
 
-Gaussian Repair Studio 是在 Windows 本机运行的 3D Gaussian Splatting（3DGS）补洞工具：打开 PLY，圈选/框选并删除目标区域，锁定视角，通过图片 API 修复 RGB，再用 LingBot-Depth 补深度、SHARP 生成高斯补丁。通过验收的结果会加载到网页，并可下载 PLY。
+SplatMend 是在 Windows 本机运行的 3D Gaussian Splatting（3DGS）补洞工具：打开 PLY，圈选/框选并删除目标区域，锁定视角，通过图片 API 修复 RGB，再用 LingBot-Depth 补深度、SHARP 生成高斯补丁。通过验收的结果会加载到网页，并可下载 PLY。
 
 **已验证平台与边界：**Windows、RTX 5070 Ti（`sm_120`）、CUDA Toolkit 12.8、VS 2022 Build Tools、Python 3.13.13。其他 GPU/系统尚未验证。图片 API 由第三方提供，可能产生费用。模型权重、密钥、本地场景与输出均不随 Git 分发。
 
