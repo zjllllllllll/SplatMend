@@ -27,8 +27,10 @@ call :require "%SAMPLE_DIR%\point_cloud.camera.json" || goto :missing
 call :require "%SAMPLE_DIR%\point_cloud.ply" || goto :missing
 call :require "%REPAIRED_RGB%" || goto :missing
 call :require "%SHARP_ROOT%\src\sharp\models\predictor.py" || goto :missing
-call :require "%SHARP_CHECKPOINT%" || goto :missing
 call :require "%LINGBOT_ROOT%\mdm\model\v2.py" || goto :missing
+call "%PIPELINE_ROOT%download_models.cmd"
+if errorlevel 1 goto :model_download_failed
+call :require "%SHARP_CHECKPOINT%" || goto :missing
 call :require "%LINGBOT_CHECKPOINT%" || goto :missing
 
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
@@ -121,4 +123,8 @@ exit /b 2
 
 :fail
 echo ERROR: pipeline stopped at a failed acceptance gate.
+exit /b 1
+
+:model_download_failed
+echo ERROR: model weight download or verification failed.
 exit /b 1

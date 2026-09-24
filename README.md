@@ -5,7 +5,7 @@
 执行原六步补洞 → 自动加载验收通过的结果。无需再向在线 SuperSplat 注入代码
 或手动整理每次任务的图片、深度、相机及 PLY。
 
-已有本机环境和已构建界面时，双击 `run_studio.cmd`。首次构建运行
+已有本机环境和已构建界面时，双击 `run_studio.cmd`；缺少权重时启动入口会自动下载并校验。首次构建运行
 `build_studio.cmd`。提示词从根目录 `prompt.txt` 读取。Seedream 使用 `ark-key.txt`（火山引擎），
 GPT Image 2 使用 `grs-key.txt`（GrsAI）；两者均不使用 OSS。完整启动、模型尺寸、
 失败恢复与当前验收状态见 [STUDIO.md](STUDIO.md)。
@@ -35,6 +35,7 @@ GPT Image 2 使用 `grs-key.txt`（GrsAI）；两者均不使用 OSS。完整启
 ├─ assets/                         仅本地保留的示例输入，Git 忽略
 ├─ studio/                         本地 Viewer、图片 API、任务调度和测试
 ├─ run_studio.cmd                  端到端工作台启动入口
+├─ download_models.cmd             首次启动时下载并校验两个模型权重
 ├─ build_studio.cmd                前端依赖锁定安装与构建
 ├─ STUDIO.md                       工作台使用、模型配置和验收状态
 ├─ third_party/
@@ -78,16 +79,16 @@ run_cuda_python.cmd
 
 成功时输出 `ENVIRONMENT_OK`。
 
-### 2. 放置模型权重
+### 2. 自动下载模型权重
 
-运行前必须准备下面两个文件，路径和文件名必须完全一致：
+首次运行 `run_studio.cmd` 或 `run_sample.cmd` 时，会自动下载并校验下面两个文件；也可提前单独运行 `download_models.cmd`。路径和文件名必须完全一致：
 
 | 模型 | 放置位置（仓库根目录相对路径） | 大小 | SHA256 |
 |---|---|---:|---|
 | SHARP | `third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt` | 2,809,738,232 bytes | `94211a75198c47f61fca7d739ba08a215418d8d398d48fddf023baccc24f073d` |
 | LingBot-Depth | `third_party/lingbot-depth/model/lingbot-depth/model.pt` | 1,284,837,952 bytes | `b60cf27ddbd0e51e9b59b03475c0d39d02d2e48ecf8dbb5866f04d46802b3c23` |
 
-两个路径已写入 `.gitignore`，本地放入后不会被误提交。权重来源和使用权限应分别遵循 SHARP 与 LingBot-Depth 的原始许可证；不要使用来源不明或哈希不一致的文件。
+两个路径已写入 `.gitignore`，下载后不会被误提交。脚本使用 Apple 官方 SHARP 地址和固定版本的 Hugging Face LingBot-Depth v0.5；已有文件校验通过时跳过下载，下载中断可重新运行以续传，校验失败不会替换现有文件。权重来源和使用权限应分别遵循 SHARP 与 LingBot-Depth 的原始许可证。
 
 ### 3. 跑本地示例
 
@@ -101,7 +102,7 @@ run_demo.cmd
 run_demo.cmd D:\temp\gaussian-hole-demo
 ```
 
-若权重未放到上述路径，入口会在启动前明确报出缺失文件并停止。
+若权重下载或 SHA256 校验失败，入口会停止并显示错误；网络恢复后可重新运行。
 
 ### 4. 跑自定义样本
 
@@ -312,7 +313,7 @@ Smoke test 的临时输出在验收后已删除；上表来自删除前的最终
 
 公开仓库只包含源码和文档；`assets/`、`outputs/`、两个模型权重及 API 密钥均由 `.gitignore` 排除。历史中的示例文件也已移除。运行 `run_demo.cmd` 前，需要自行准备符合“输入数据契约”的本地 `assets/` 示例。
 
-本项目没有下载两个模型权重的脚本。`run_sample.cmd` 只检查它们是否位于上文指定路径；`run_cuda_python.cmd` 还启用了 Hugging Face 离线模式。权重获取方式见两套模型各自的 `third_party` README，下载后须核对上文的字节数和 SHA256，并遵守各自许可证。
+`download_models.cmd` 在进入 CUDA 运行环境前下载并校验两个权重，`run_studio.cmd` 和 `run_sample.cmd` 会自动调用它。仅校验已有文件时可运行 `download_models.cmd -VerifyOnly`。`run_cuda_python.cmd` 仍保持 Hugging Face 离线模式，推理过程不会临时下载模型。
 
 ## 已知边界
 
