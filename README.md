@@ -15,24 +15,24 @@ GPT Image 2 使用 `grs-key.txt`（GrsAI）；两者均不使用 OSS。完整启
 
 本仓库是当前已验证的补洞链路最小工程版：在一个带洞视角中合成修复 RGB，用 LingBot 补齐相机深度，再让 SHARP 在生成阶段直接接受这张完整深度；最后按二维洞区与六级边缘带裁出 SHARP 高斯，并原位追加到原场景。链路不再做 ICP、生成后深度缩放、整体平移或 Poisson 后校正。
 
-2026-08-28 已在随仓库提供的 `assets` 示例上，用 `run_demo.cmd` 从第 1 步连续跑到第 6 步，最终状态为 `PIPELINE_ACCEPTED`。
+2026-08-28 已在本地 `assets` 示例上，用 `run_demo.cmd` 从第 1 步连续跑到第 6 步，最终状态为 `PIPELINE_ACCEPTED`。
 
 ## SHARP 是否在仓库里
 
-在。为了避免算法逻辑依赖另一份本地 checkout，仓库已经包含运行所需的两套模型源码；模型权重体积较大，不上传 GitLab，需要使用者自行放到指定位置：
+在。为了避免算法逻辑依赖另一份本地 checkout，仓库已经包含运行所需的两套模型源码；模型权重体积较大，不随公开仓库上传，需要使用者自行放到指定位置：
 
 - `third_party/ml-sharp`：SHARP 源码、Windows/gsplat 兼容修改和原始许可证；
 - `third_party/lingbot-depth`：LingBot-Depth 源码、无 xFormers 的 Windows fallback 和许可证。
 
 运行脚本会把仓库内的 `third_party/ml-sharp/src` 放在 `PYTHONPATH` 最前面，不会退回已安装的 `sharp`，也不会引用旧的 `sharp_sd2_test`、`real-gauss-hole` 或其他工程目录。
 
-注意：SHARP 模型权重只允许用于非商业科研用途，具体条款见 `third_party/ml-sharp/LICENSE_MODEL`。示例 PLY 和深度文件通过 Git LFS 管理，两个模型权重不在仓库中。
+注意：SHARP 模型权重只允许用于非商业科研用途，具体条款见 `third_party/ml-sharp/LICENSE_MODEL`。本地示例数据和两个模型权重均不在公开仓库中。
 
 ## 目录结构
 
 ```text
 .
-├─ assets/                         唯一保留的完整示例输入
+├─ assets/                         仅本地保留的示例输入，Git 忽略
 ├─ studio/                         本地 Viewer、图片 API、任务调度和测试
 ├─ run_studio.cmd                  端到端工作台启动入口
 ├─ build_studio.cmd                前端依赖锁定安装与构建
@@ -56,7 +56,7 @@ GPT Image 2 使用 `grs-key.txt`（GrsAI）；两者均不使用 OSS。完整启
 └─ WINDOWS_ENVIRONMENT.md          GPU 环境和兼容补丁说明
 ```
 
-仓库中没有历史运行记录、批处理结果、旧数据集、缓存或旧路线启动脚本。运行输出统一写入 `outputs/`，并被 `.gitignore` 排除。
+仓库中没有历史运行记录、批处理结果、旧数据集、缓存或旧路线启动脚本。运行输出统一写入 `outputs/`；`outputs/` 和本地示例 `assets/` 均被 `.gitignore` 排除。
 
 ## 快速运行
 
@@ -89,13 +89,13 @@ run_cuda_python.cmd
 
 两个路径已写入 `.gitignore`，本地放入后不会被误提交。权重来源和使用权限应分别遵循 SHARP 与 LingBot-Depth 的原始许可证；不要使用来源不明或哈希不一致的文件。
 
-### 3. 跑随仓库示例
+### 3. 跑本地示例
 
 ```bat
 run_demo.cmd
 ```
 
-默认输出到 `outputs/demo`。如需指定临时目录：
+示例数据不随公开仓库分发；本地已有 `assets/` 完整示例时才能运行。默认输出到 `outputs/demo`。如需指定临时目录：
 
 ```bat
 run_demo.cmd D:\temp\gaussian-hole-demo
@@ -308,26 +308,11 @@ Smoke test 的临时输出在验收后已删除；上表来自删除前的最终
 - 不要随意升级/重装 torch 或 gsplat，Windows 兼容修改和已编译的 sm_120 扩展缓存会被破坏；
 - `run_sharp_hard_depth.py` 会在加载完整 SHARP 模型树前预加载 gsplat CUDA 后端，防止后端被错误初始化为 `None`。
 
-## GitLab 与首次建库记录
+## 公开仓库与本地数据
 
-本地 `main` 已包含端到端工作台和新图片 API，尚未推送到 GitLab。
-以下命令仅是原最小工程的首次建库记录，不用于当前已有仓库。
+公开仓库只包含源码和文档；`assets/`、`outputs/`、两个模型权重及 API 密钥均由 `.gitignore` 排除。历史中的示例文件也已移除。运行 `run_demo.cmd` 前，需要自行准备符合“输入数据契约”的本地 `assets/` 示例。
 
-两个模型权重不进入 Git；仓库只用 Git LFS 管理示例 PLY 和深度文件。克隆后按“放置模型权重”一节补齐两个 `.pt` 文件即可运行。
-
-```bat
-git init
-git lfs install
-git add .gitattributes
-git add .
-git lfs ls-files
-git commit -m "Add depth-anchored SHARP Gaussian inpainting demo"
-git branch -M main
-git remote add origin <gitlab-repository-url>
-git push -u origin main
-```
-
-提交前确认 `git lfs ls-files` 包含 `assets/point_cloud.ply` 和 `assets/point_cloud.depth.npy`，且不包含两个模型权重。团队内部可把权重放到受控模型存储，部署时下载到 README 指定位置并校验 SHA256。
+本项目没有下载两个模型权重的脚本。`run_sample.cmd` 只检查它们是否位于上文指定路径；`run_cuda_python.cmd` 还启用了 Hugging Face 离线模式。权重获取方式见两套模型各自的 `third_party` README，下载后须核对上文的字节数和 SHA256，并遵守各自许可证。
 
 ## 已知边界
 

@@ -13,6 +13,7 @@ api_key.txt
 !.env.example
 node_modules/
 studio/web/dist/
+assets/
 outputs/
 work_*/
 old_results/

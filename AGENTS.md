@@ -16,4 +16,4 @@ The authoritative SHARP and LingBot sources and weights are under `third_party`.
 
 ## Generated data
 
-Runtime output belongs under `outputs/` and must not be committed. Keep only the single documented sample under `assets/`. Large binary inputs, weights and PLY/NPY files must remain under Git LFS rules from `.gitattributes`.
+Runtime output belongs under ignored `outputs/`. The local demo sample belongs under ignored `assets/`; neither directory may be committed. Model weights and large binary inputs must not be committed. If future files are intentionally tracked, preserve the PLY/NPY/weight Git LFS rules in `.gitattributes`.
