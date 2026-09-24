@@ -33,6 +33,7 @@ class JobTests(unittest.TestCase):
         ready.start()
         self.addCleanup(ready.stop)
         for name in BASELINE_FILES:
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             (self.root / name).write_text("unchanged baseline", encoding="utf-8")
         self.scene_id = "a" * 32
         directory = self.manager.scenes / self.scene_id
@@ -171,17 +172,21 @@ class JobTests(unittest.TestCase):
 
     def test_only_original_launcher_and_verified_result(self):
         job_id, folder = self.new_job()
+        repaired = folder / "appearance" / "repaired_rgb.png"
+        repaired.parent.mkdir()
+        Image.new("RGB", (256, 256), (230, 220, 210)).save(repaired)
         output = folder / "pipeline"
         (output / "fusion").mkdir(parents=True)
         PlyData([PlyElement.describe(self.vertex, "vertex")], text=False).write(output / "fusion" / "depth_anchored_inpainted.ply")
         atomic_json(output / "sample_acceptance.json", {"status": "accepted"})
         process = Mock(stdout=io.StringIO("[1/6] Prepare registered inputs.\n[6/6] Verify.\n"))
         process.wait.return_value = 0
-        with patch("studio.jobs.repair_image", return_value=folder / "repaired_rgb.png"), patch("studio.jobs.subprocess.Popen", return_value=process) as spawn:
+        with patch("studio.jobs.repair_image", return_value=repaired), patch("studio.jobs.subprocess.Popen", return_value=process) as spawn:
             self.manager._run(job_id)
         command = spawn.call_args.args[0]
         self.assertEqual(command, [str(self.root / "run_sample.cmd"), str(int(job_id, 16)),
-                                   str(folder / "input"), str(folder / "repaired_rgb.png"), str(output)])
+                                   str(folder / "input"), str(folder / "appearance" / "color_corrected_rgb.png"), str(output)])
+        self.assertTrue((folder / "appearance" / "color_corrected_rgb.png").is_file())
         self.assertEqual(self.manager.state(job_id)["status"], "succeeded")
         self.assertTrue(self.manager.result(job_id).is_file())
         for path in folder.rglob("*.json"):

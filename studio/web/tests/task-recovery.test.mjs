@@ -29,5 +29,5 @@ test('active job wins, explicit task link wins over stale session, invalid link 
     assert.equal(rememberedJob(null, `?job=${b}`, c), b);
     assert.equal(rememberedJob(null, '', c), c);
     assert.equal(rememberedJob(null, '', null), null);
-    assert.throws(() => rememberedJob(null, '?job=../../api_key.txt', null), /无效/);
+    assert.throws(() => rememberedJob(null, '?job=../../api_key.txt', null), /invalid/);
 });

@@ -18,6 +18,7 @@ from PIL import Image
 from plyfile import PlyData, PlyElement
 
 from studio.image_api import ImageAPIError, ImageDownloadError, MODELS, decode_image, model_size, model_preflight, read_key, repair_image, validate_prompt
+from studio.color_correction import correct_file
 from studio.diagnostics import depth_rejection_message
 from studio.lifecycle import matching_job_processes, process_alive, process_identity
 
@@ -27,6 +28,7 @@ BASELINE_FILES = (
     "run_sample.cmd", "run_cuda_python.cmd", "prepare_depth_anchored_inputs.py",
     "run_lingbot_depth.py", "fuse_and_validate_depth.py", "run_sharp_hard_depth.py",
     "merge_hard_patch.py", "verify_depth_anchored_sample.py", "gaussian_patch_io.py", "sharp_runtime.py",
+    "studio/color_correction.py",
 )
 TERMINAL = {"succeeded", "failed"}
 
@@ -412,14 +414,19 @@ class JobManager:
                 repaired = repair_image(folder / "input" / "point_cloud.png", folder / "appearance",
                                         request["model"], request["prompt"], read_key(self.root, request["model"]), result_cache=cached)
             self.image_results.pop(job_id, None)
-            self.update(job_id, status="pipeline", image_ready=True, message="Running the existing six-step depth-anchored pipeline.")
+            self.update(job_id, status="color_correction", image_ready=True,
+                        message="Color correction: Laplacian interpolation using a 30–180 px band outside the mask; zero correction at the patch center.")
+            corrected = correct_file(folder / "input" / "point_cloud.png", repaired,
+                                     folder / "appearance" / "color_corrected_rgb.png")
+            self.update(job_id, status="pipeline", image_ready=True, color_corrected=True,
+                        message="Running the existing six-step depth-anchored pipeline.")
             fingerprints = {name: digest(self.root / name) for name in BASELINE_FILES}
             atomic_json(folder / "pipeline_baseline.json", fingerprints)
             output = folder / "pipeline"
             # The only numerical entry point. No alternate commands, flags, or model fallbacks.
             # The existing verifier's --sample-id is an integer, not a UUID.
             sample_id = str(int(job_id, 16))
-            command = [str(self.root / "run_sample.cmd"), sample_id, str(folder / "input"), str(repaired), str(output)]
+            command = [str(self.root / "run_sample.cmd"), sample_id, str(folder / "input"), str(corrected), str(output)]
             with (folder / "pipeline.log").open("w", encoding="utf-8") as log:
                 self.update(job_id, log_ready=True)
                 process = subprocess.Popen(command, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

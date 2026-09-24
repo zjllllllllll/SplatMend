@@ -6,6 +6,16 @@ if errorlevel 1 (
   echo Node.js 20.19 or newer is required to build the local viewer.
   exit /b 2
 )
+where node.exe >nul 2>&1
+if errorlevel 1 (
+  echo Node.js 20.19 or newer is required to build the local viewer.
+  exit /b 2
+)
+node.exe -e "const [major,minor]=process.versions.node.split('.').map(Number); process.exit(major>20 || (major===20 && minor>=19) ? 0 : 1)"
+if errorlevel 1 (
+  echo Node.js 20.19 or newer is required to build the local viewer.
+  exit /b 2
+)
 if not exist "package-lock.json" (
   echo Missing package-lock.json. Restore the version-controlled lock file.
   exit /b 2

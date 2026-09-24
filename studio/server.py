@@ -30,6 +30,11 @@ def workspace_id(root: Path) -> str:
     return hashlib.sha256(str(root.resolve()).casefold().encode("utf-8")).hexdigest()
 
 
+def sample_available(root: Path) -> bool:
+    assets = root / "assets"
+    return all((assets / name).is_file() for name in ("point_cloud.ply", "point_cloud.camera.json"))
+
+
 def existing_studio_url(root: Path) -> str:
     """Verify a live server from this checkout without opening an arbitrary URL."""
     try:
@@ -172,7 +177,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"token": self.server.token, "workspace_id": workspace_id(manager.root),
                                         "prompt": validate_prompt(prompt),
                                         "models": public_models(),
-                                        "preflight": manager.preflight(), "active_job": manager.active})
+                                        "sample_available": sample_available(manager.root), "preflight": manager.preflight(), "active_job": manager.active})
             if len(segments) == 4 and segments[:2] == ["api", "scenes"] and segments[3] == "scene.ply":
                 return self._file(manager.scenes / identifier(segments[2]) / "scene.ply")
             if len(segments) >= 3 and segments[:2] == ["api", "jobs"]:
@@ -186,6 +191,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self._file(manager.result(job_id))
                     public_files = {"source.png": "input/point_cloud.png", "hole.png": "input/hole_preview.png",
                                     "repaired.png": "appearance/repaired_rgb.png", "pipeline.log": "pipeline.log",
+                                    "corrected.png": "appearance/color_corrected_rgb.png",
                                     "deleted.bin": "input/deleted.bin",
                                     "acceptance.json": "pipeline/sample_acceptance.json"}
                     if segments[3] in public_files:
@@ -208,11 +214,13 @@ class Handler(BaseHTTPRequestHandler):
             segments = parsed.path.strip("/").split("/")
             manager = self.server.manager
             if parsed.path == "/api/sample":
+                if not sample_available(manager.root):
+                    raise ValueError("Local sample files are unavailable.")
                 scene_id = uuid.uuid4().hex
                 directory = manager.scenes / scene_id
                 directory.mkdir()
                 shutil.copyfile(manager.root / "assets" / "point_cloud.ply", directory / "upload.ply")
-                sample = manager.register_scene(directory, "示例 · point_cloud.ply")
+                sample = manager.register_scene(directory, "Sample · point_cloud.ply")
                 sample["camera"] = json.loads((manager.root / "assets" / "point_cloud.camera.json").read_text(encoding="utf-8"))
                 return self._json(201, sample)
             if parsed.path == "/api/scenes":

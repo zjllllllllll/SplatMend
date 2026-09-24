@@ -1,6 +1,6 @@
 # Direct Python dependencies outside the CUDA stack.
 # Do not add torch, torchvision or gsplat here: their verified Windows/CUDA
-# builds and compatibility patches are documented in WINDOWS_ENVIRONMENT.md.
+# builds and compatibility patches are documented in AGENTS.md.
 numpy==2.2.6
 scipy==1.15.3
 opencv-python-headless==4.13.0.92

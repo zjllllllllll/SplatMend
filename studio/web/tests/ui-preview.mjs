@@ -7,7 +7,7 @@ const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf
     .replace('<script type="module" src="/main.js"></script>', `<script type="module">
         import {phase, jobProgress, renderProgress} from '/job-progress.mjs';
         const status = new URLSearchParams(location.search).get('state') || 'pipeline';
-        const current = status === 'complete' ? phase(9, '本地界面样例：结果已加载。', 'complete') :
+        const current = status === 'complete' ? phase(10, '本地界面样例：结果已加载。', 'complete') :
             jobProgress({status, stage:3, image_ready:true, message:'本地进度显示样例，不运行任务或模型。'});
         renderProgress(document, current);
         document.getElementById('status').textContent = '仅用于界面检查；所有任务控件已禁用。';

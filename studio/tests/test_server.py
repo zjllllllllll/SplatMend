@@ -45,9 +45,17 @@ class ServerTests(unittest.TestCase):
         config = json.loads(raw)
         self.assertEqual({item["id"] for item in config["models"]}, {"doubao-seedream-5-0-260128", "gpt-image-2"})
         self.assertTrue(config["preflight"]["key_ready"])
+        self.assertFalse(config["sample_available"])
         self.assertNotIn(b"SECRET_MUST_NOT_BE_SERVED", raw)
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertEqual(self.request()[0], 200)
+
+    def test_missing_local_sample_is_hidden_and_does_not_create_scene(self):
+        code, _, raw = self.request("POST", "/api/sample", b"",
+                                    {"X-Studio-Token": self.server.token})
+        self.assertEqual(code, 400)
+        self.assertIn(b"Local sample files are unavailable", raw)
+        self.assertEqual(list(self.server.manager.scenes.iterdir()), [])
 
     def test_host_origin_and_mutation_token_enforced(self):
         for headers in [{"Host": "attacker.example"}, {"Origin": "https://attacker.example"}, {"Sec-Fetch-Site": "cross-site"}]:

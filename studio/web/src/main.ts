@@ -22,20 +22,25 @@ import { restoredDeletionOp } from './restore-deletion.mjs';
 import { rememberedJob } from './job-navigation.mjs';
 import { isEditing, keyboardNavigation } from './keyboard-navigation.mjs';
 import { phase, jobProgress, renderProgress } from './job-progress.mjs';
+import { getLanguage, setLanguage, t, translateDom, translateMessage } from './i18n.mjs';
 
 type SceneInfo = { id: string, name: string, count: number, file: string };
 type ModelProfile = { id: string, label: string, sizes: [number, number][], input_transport: string, response_format: string };
 type JobView = { scene: SceneInfo, model: string, prompt: string,
     viewer_camera: ReturnType<Scene['camera']['docSerialize']> | null,
     camera: ReturnType<typeof cameraMetadata> };
-type JobState = { status: string, message: string, stage: number, image_ready?: boolean,
+type JobState = { status: string, message: string, stage: number, image_ready?: boolean, color_corrected?: boolean,
     log_ready?: boolean, can_retry_download?: boolean, can_retry_pipeline?: boolean,
     directory: string, result?: string, result_scene?: SceneInfo };
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const button = (id: string) => el<HTMLButtonElement>(id);
+let lastStatusMessage = 'Starting local tool…';
+let lastStatusError = false;
 const status = (message: string, error = false) => {
-    el('status').textContent = message;
+    lastStatusMessage = message;
+    lastStatusError = error;
+    el('status').textContent = translateMessage(message);
     el('status').classList.toggle('error', error);
 };
 let token = '';
@@ -43,6 +48,7 @@ let busy = false;
 let apiReady = false;
 let modelProfiles: ModelProfile[] = [];
 let keysReady: Record<string, boolean> = {};
+let preflight: { key_ready: boolean, disk_free_gb: number, missing_files: string[] } = null;
 let active: Splat = null;
 let source: SceneInfo = null;
 let sourceBlob: Blob = null;
@@ -52,6 +58,21 @@ let tools: ToolManager;
 let lastJobId: string = null;
 let navigation: ReturnType<typeof keyboardNavigation>;
 let currentProgress: ReturnType<typeof phase> = null;
+
+function renderPreflight() {
+    if (!preflight) return;
+    el('preflight').textContent = `${t(preflight.key_ready ? 'API key configured' : 'API key not found')} · ${t('Free disk: {size} GB', { size: preflight.disk_free_gb })}`;
+    if (preflight.missing_files.length) el('preflight').textContent += ` · ${t('Model or pipeline files missing')}`;
+}
+
+function refreshLanguage() {
+    translateDom(document);
+    status(lastStatusMessage, lastStatusError);
+    renderPreflight();
+    if (currentProgress) showProgress(currentProgress);
+    if (source) el('scene-name').textContent = t(source.name);
+    if (modelProfiles.length) controls();
+}
 
 function showProgress(next: ReturnType<typeof phase>, reveal = false) {
     currentProgress = next;
@@ -99,7 +120,7 @@ function controls() {
     el<HTMLSelectElement>('resolution').disabled = busy;
     el<HTMLTextAreaElement>('prompt').disabled = busy;
     el('lock-shield').hidden = !busy || !source;
-    if (active) el('counts').textContent = `${active.numSplats.toLocaleString()} 个高斯 · 选中 ${active.numSelected.toLocaleString()}`;
+    if (active) el('counts').textContent = t('{count} splats · {selected} selected', { count: active.numSplats.toLocaleString(), selected: active.numSelected.toLocaleString() });
 }
 
 function modelOptions() {
@@ -150,7 +171,7 @@ async function loadAsset(blob: Blob, deleted?: Uint8Array, preserveView = false)
 async function openFile(file: File) {
     if (!file || busy) return;
     setBusy(true);
-    status('正在读取高斯场景…');
+    status('Reading Gaussian scene…');
     try {
         const next = await api(`/api/scenes?name=${encodeURIComponent(file.name)}`, 'POST', file, 'application/octet-stream');
         const response = await fetch(next.file);
@@ -160,8 +181,8 @@ async function openFile(file: File) {
         source = next;
         sourceBlob = blob;
         forgetJob();
-        el('scene-name').textContent = next.name;
-        status('场景已就绪。调整视角，圈选并删除需要移除的区域。');
+        el('scene-name').textContent = t(next.name);
+        status('Scene ready. Adjust the view, then select and remove the area to repair.');
         el('job-links').hidden = true;
     } catch (error) { status(error.message, true); }
     finally { setBusy(false); }
@@ -170,7 +191,7 @@ async function openFile(file: File) {
 async function openSample() {
     if (busy) return;
     setBusy(true);
-    status('正在打开仓库示例，并恢复其已记录的相机视角…');
+    status('Opening local sample and restoring its saved camera view…');
     try {
         const next = await api('/api/sample', 'POST');
         const response = await fetch(next.file);
@@ -187,8 +208,8 @@ async function openSample() {
         scene.camera.fov = c.fov_degrees;
         scene.camera.setPose(position, position.clone().add(forward), 0);
         scene.forceRender = true;
-        el('scene-name').textContent = next.name;
-        status('示例已就绪，视角与仓库相机记录一致。示例已包含空洞，可直接开始补洞。');
+        el('scene-name').textContent = t(next.name);
+        status('Sample ready. Its saved camera view has been restored; the hole is already present.');
     } catch (error) { status(error.message, true); }
     finally { setBusy(false); }
 }
@@ -208,20 +229,20 @@ async function startRepair() {
     if (busy || !active || !source) return;
     setBusy(true);
     const savedCamera = scene.camera.docSerialize();
-    showProgress(phase(0, '检查配置，然后导出锁定视角的 RGB、深度和相机参数。'), true);
+    showProgress(phase(0, 'Checking configuration, then exporting locked RGB, depth and camera data.'), true);
     try {
         // Recheck key status before GPU capture or any job creation.
         const config = await api('/api/config');
         token = config.token;
-        if (!config.preflight.key_ready) throw new Error('API 密钥缺失，请配置 ark-key.txt 或 grs-key.txt。');
+        if (!config.preflight.key_ready) throw new Error('API key missing. Configure ark-key.txt or grs-key.txt.');
         modelProfiles = config.models;
         keysReady = config.preflight.keys_ready;
         const options = modelOptions();
         if (!options.ready) throw new Error(options.message);
-        status('已锁定视角，正在导出带洞图片、深度和相机参数…');
+        status('View locked. Exporting the image with a hole, depth and camera data…');
         const [width, height] = el<HTMLSelectElement>('resolution').value.split(',').map(Number);
         const exported = await capture(scene, active, width, height);
-        showProgress(phase(1, '正在保存带洞图片、深度、删除记录与相机参数…'));
+        showProgress(phase(1, 'Saving the image with a hole, depth, deletion mask and camera data…'));
         const request = { scene_id: source.id, model: el<HTMLSelectElement>('model').value,
             prompt: el<HTMLTextAreaElement>('prompt').value, camera: exported.camera, viewer_camera: savedCamera };
         const job = await api('/api/jobs', 'POST', JSON.stringify(request), 'application/json');
@@ -250,7 +271,7 @@ function restoreCamera(view: JobView) {
 async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'retry-pipeline') {
     setBusy(true);
     showProgress(phase(action === 'retry-pipeline' ? 3 : action === 'retry-download' ? 2 : 1,
-        '正在读取同一个任务的状态，不会重复生图…', 'waiting'), true);
+        'Reading this job; no new image generation request…', 'waiting'), true);
     lastJobId = jobId;
     sessionStorage.setItem('repair-studio-job', jobId);
     window.history.replaceState(null, '', `/?job=${encodeURIComponent(jobId)}`);
@@ -260,7 +281,7 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         const config = await api('/api/config');
         token = config.token;
         view = await api(`/api/jobs/${jobId}/view`);
-        el('scene-name').textContent = view.scene.name;
+        el('scene-name').textContent = t(view.scene.name);
         // Retired historical models remain in task records, not in the selector.
         // An unsupported value selects nothing and blocks a new job until chosen.
         el<HTMLSelectElement>('model').value = view.model;
@@ -272,8 +293,10 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         el<HTMLAnchorElement>('source-link').href = `/api/jobs/${jobId}/source.png`;
         el<HTMLAnchorElement>('task-link').href = `/?job=${encodeURIComponent(jobId)}`;
         el<HTMLAnchorElement>('repaired-link').href = `/api/jobs/${jobId}/repaired.png`;
+        el<HTMLAnchorElement>('corrected-link').href = `/api/jobs/${jobId}/corrected.png`;
         el<HTMLAnchorElement>('log-link').href = `/api/jobs/${jobId}/pipeline.log`;
         el('repaired-link').hidden = true;
+        el('corrected-link').hidden = true;
         el('log-link').hidden = true;
         el('result-link').hidden = true;
         el('job-links').hidden = false;
@@ -291,29 +314,30 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
             catch {
                 // An interrupted response does not prove submission failed. Read
                 // the same task; never automatically submit or generate twice.
-                status('正在确认同一个任务的提交状态，不会重复生图…');
+                status('Confirming this job submission; no new image generation request…');
             }
         }
         let state: JobState;
         for (;;) {
             try { state = await api(`/api/jobs/${jobId}`); }
             catch {
-                status('本地连接暂时中断，正在重新读取同一个任务；不会重复调用图片 API。', true);
-                showProgress(phase(currentProgress.index, '连接暂时中断，正在重新确认同一个任务的进度。', 'waiting'));
+                status('Local connection interrupted. Rechecking this job without calling the image API again.', true);
+                showProgress(phase(currentProgress.index, 'Connection interrupted. Rechecking job progress.', 'waiting'));
                 await new Promise(resolve => setTimeout(resolve, 3000));
                 continue;
             }
             status(state.message, state.status === 'failed');
             showProgress(jobProgress(state, currentProgress));
             el('repaired-link').hidden = !state.image_ready;
+            el('corrected-link').hidden = !state.color_corrected;
             el('log-link').hidden = !state.log_ready;
-            if (state.status === 'uploading') throw new Error('任务尚未启动；未调用图片 API。输入已保留，可以重新开始。');
+            if (state.status === 'uploading') throw new Error('Job has not started. Inputs are saved; no image API call was made.');
             if (state.status === 'succeeded' || state.status === 'failed') break;
             await new Promise(resolve => setTimeout(resolve, 1500));
         }
         el('retry-download').hidden = !state.can_retry_download || !modelProfiles.some(item => item.id === view.model);
         el('retry-pipeline').hidden = !state.can_retry_pipeline;
-        if (state.status === 'failed') throw new Error(`${state.message} 任务目录：${state.directory}`);
+        if (state.status === 'failed') throw new Error(`${state.message} ${t('Job directory: {path}', { path: state.directory })}`);
         el<HTMLAnchorElement>('result-link').href = state.result;
         el('result-link').hidden = false;
         const response = await fetch(state.result);
@@ -329,8 +353,8 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         sourceBlob = resultBlob;
         released = false;
         el('scene-name').textContent = 'repaired_scene.ply';
-        showProgress(phase(9, '六步原链路验收通过，结果已加载，可以下载 PLY。', 'complete'));
-        status('补洞完成，六步原链路验收通过。结果已加载，也可以下载 PLY。');
+        showProgress(phase(10, 'The six-step pipeline accepted the result. Scene loaded; PLY is ready to download.', 'complete'));
+        status('Repair complete. The accepted result is loaded and ready to download.');
     } catch (error) {
         failProgress(error.message);
         status(error.message, true);
@@ -347,8 +371,8 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
                 const removed = new Uint8Array(await response.arrayBuffer());
                 await loadAsset(sourceBlob, removed, true);
                 restoreCamera(view);
-                el('scene-name').textContent = source.name;
-            } catch { status(`${error.message} 原场景文件仍保存在本地，请重新打开。`, true); }
+                el('scene-name').textContent = t(source.name);
+            } catch { status(`${error.message} ${t('The original scene is still saved locally. Please reopen it.')}`, true); }
         }
     } finally {
         el('locked-view').hidden = true;
@@ -357,7 +381,17 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
 }
 
 async function main() {
+    const languageSelect = el<HTMLSelectElement>('language');
+    setLanguage(localStorage.getItem('repair-studio-language'));
+    languageSelect.value = getLanguage();
+    refreshLanguage();
+    languageSelect.onchange = () => {
+        setLanguage(languageSelect.value);
+        localStorage.setItem('repair-studio-language', getLanguage());
+        refreshLanguage();
+    };
     const config = await api('/api/config');
+    button('sample').hidden = !config.sample_available;
     token = config.token;
     const model = el<HTMLSelectElement>('model');
     modelProfiles = config.models;
@@ -372,8 +406,9 @@ async function main() {
     });
     el<HTMLTextAreaElement>('prompt').value = config.prompt;
     apiReady = config.preflight.key_ready && config.preflight.missing_files.length === 0;
-    el('preflight').textContent = `${config.preflight.key_ready ? 'API 密钥已配置' : '未找到 API 密钥'} · 剩余磁盘 ${config.preflight.disk_free_gb} GB`;
-    if (config.preflight.missing_files.length) el('preflight').textContent += ' · 模型或管线文件缺失';
+    preflight = config.preflight;
+    renderPreflight();
+
     WorkerQueue.maxWorkers = 0;
     const events = new Events();
     const queue = new CommandQueue();
@@ -455,9 +490,9 @@ async function main() {
     }
     scene.start();
     controls();
-    status(apiReady ? '打开 PLY 文件开始。' : '请检查模型文件和 API 密钥，然后刷新页面。');
+    status(apiReady ? 'Open a PLY file to begin.' : 'Check model files and API key, then refresh this page.');
     const restoreId = rememberedJob(config.active_job, window.location.search, sessionStorage.getItem('repair-studio-job'));
     if (restoreId) await followJob(restoreId);
 }
 
-main().catch(error => { status(`启动失败：${error.message}`, true); });
+main().catch(error => { status(t('Startup failed: {message}', { message: error.message }), true); });

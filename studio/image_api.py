@@ -24,7 +24,7 @@ from PIL import Image, ImageOps
 
 from studio.errors import ImageAPIError
 
-ENDPOINTS = {"doubao-seedream-5-0-260128": ("ark.cn-beijing.volces.com", "/api/v3/images/generations"), "gpt-image-2": ("grsai.dakka.com.cn", "/v1/api/generate")}
+ENDPOINTS = {"doubao-seedream-5-0-260128": ("ark.cn-beijing.volces.com", "/api/v3/images/generations"), "gpt-image-2": ("grsaiapi.com", "/v1/api/generate")}
 IMAGE_LIMIT = 32 * 1024 * 1024
 # The gateway may return base64 despite response_format=url. Bound that JSON too.
 JSON_LIMIT = 48 * 1024 * 1024
@@ -86,9 +86,6 @@ def model_size(model: str, width: int, height: int) -> str:
     w, h = min(MODELS[model]["sizes"], key=lambda size: abs(size[0] / size[1] - ratio))
     if abs(w * height - width * h) * 100 > width * h * 2:
         raise ImageAPIError("This view ratio is not supported by the selected model.")
-    if model == "gpt-image-2":
-        return {(1672, 941): "16:9", (1443, 1090): "4:3", (1024, 1024): "1:1",
-                (1090, 1443): "3:4", (941, 1672): "9:16"}[(w, h)]
     return f"{w}x{h}"
 
 
@@ -177,50 +174,66 @@ def post_edit(body: dict, key: str, *, connection_factory=None, sleep=time.sleep
     model = body.get("model")
     if model not in ENDPOINTS:
         raise ImageAPIError("Choose a supported image model.")
-    host, path = ENDPOINTS[model]
+    default_host, path = ENDPOINTS[model]
+    hosts = (default_host,)
+    if model == "gpt-image-2":
+        preferred = os.environ.get("GRSAI_API_HOST", default_host).strip().lower()
+        allowed = ("grsaiapi.com", "grsai.dakka.com.cn")
+        if preferred not in allowed:
+            raise ImageAPIError("GRSAI_API_HOST must be an official GrsAI API hostname.")
+        hosts = (preferred, next(host for host in allowed if host != preferred))
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    for attempt in range(3):
-        connection = factory(host, timeout=10)
-        delay = None
-        phase = "connect"
-        try:
-            connection.connect()
-            connection.sock.settimeout(180)
-            phase = "send"
-            connection.request("POST", path, payload, {
-                "Content-Type": "application/json", "Accept": "application/json",
-                "Authorization": f"Bearer {key}",
-            })
-            phase = "response"
-            response = connection.getresponse()
-            if response.status == 429 and attempt < 2:
-                delay = _retry_delay(response.getheader("Retry-After"), attempt)
-            elif response.status != 200:
-                # Never include response JSON, request headers, or signed URLs.
-                detail = _error_summary(response, key)
-                raise ImageAPIError(f"Image API returned HTTP {response.status}; model was not changed.{detail}")
-            else:
-                if model == "doubao-seedream-5-0-260128" and "text/event-stream" in (response.getheader("Content-Type") or ""):
-                    return _ark_stream_result(response)
-                raw = _bounded_read(response, JSON_LIMIT)
-                try:
-                    result = json.loads(raw)
-                except (ValueError, UnicodeError, RecursionError):
-                    raise ImageAPIError("Image API returned invalid JSON.") from None
-                if not isinstance(result, dict):
-                    raise ImageAPIError("Image API returned an invalid result object.")
-                return _grs_result(result, key, host, connection_factory=connection_factory, sleep=sleep) if model == "gpt-image-2" else result
-        except (OSError, http.client.HTTPException) as error:
-            raise ImageAPIError(
-                f"Image API transport failed during {phase} ({type(error).__name__}). "
-                "The request may have been billed; it was not automatically repeated."
-            ) from None
-        finally:
-            connection.close()
-        if delay is not None:
-            sleep(delay)
-    raise ImageAPIError("Image API retry limit reached.")
-
+    for host_index, host in enumerate(hosts):
+        for attempt in range(3):
+            connection = factory(host, timeout=10)
+            delay = None
+            phase = "connect"
+            try:
+                connection.connect()
+                connection.sock.settimeout(180)
+                phase = "send"
+                connection.request("POST", path, payload, {
+                    "Content-Type": "application/json", "Accept": "application/json",
+                    "Authorization": f"Bearer {key}",
+                })
+                phase = "response"
+                response = connection.getresponse()
+                if response.status == 429 and attempt < 2:
+                    delay = _retry_delay(response.getheader("Retry-After"), attempt)
+                elif response.status != 200:
+                    # Never include response JSON, request headers, or signed URLs.
+                    detail = _error_summary(response, key)
+                    raise ImageAPIError(f"Image API returned HTTP {response.status}; model was not changed.{detail}")
+                else:
+                    if model == "doubao-seedream-5-0-260128" and "text/event-stream" in (response.getheader("Content-Type") or ""):
+                        return _ark_stream_result(response)
+                    raw = _bounded_read(response, JSON_LIMIT)
+                    try:
+                        result = json.loads(raw)
+                    except (ValueError, UnicodeError, RecursionError):
+                        raise ImageAPIError("Image API returned invalid JSON.") from None
+                    if not isinstance(result, dict):
+                        raise ImageAPIError("Image API returned an invalid result object.")
+                    return _grs_result(result, key, host, connection_factory=connection_factory, sleep=sleep) if model == "gpt-image-2" else result
+            except (OSError, http.client.HTTPException) as error:
+                if phase == "connect" and host_index + 1 < len(hosts):
+                    break  # No request bytes were sent, so trying the other node cannot duplicate a generation.
+                if phase == "connect":
+                    raise ImageAPIError(
+                        f"Image API could not connect to {'either GrsAI node' if len(hosts) > 1 else 'the provider'}. "
+                        f"No generation request was sent ({type(error).__name__})."
+                    ) from None
+                raise ImageAPIError(
+                    f"Image API transport failed during {phase} ({type(error).__name__}). "
+                    "The request may have been billed; it was not automatically repeated."
+                ) from None
+            finally:
+                connection.close()
+            if delay is not None:
+                sleep(delay)
+        else:
+            raise ImageAPIError("Image API retry limit reached.")
+    raise ImageAPIError("Image API could not connect to either GrsAI node. No generation request was sent.")
 
 def _ark_stream_result(response) -> dict:
     total = 0
@@ -253,6 +266,45 @@ def _ark_stream_result(response) -> dict:
     raise ImageAPIError("Volcengine image stream ended without an image.")
 
 
+def _query_grs_task(task_id: str, key: str, host: str, *, connection_factory=None, sleep=time.sleep) -> dict:
+    """Retry only the read-only result GET; never resubmit a generation POST."""
+    factory = connection_factory or http.client.HTTPSConnection
+    for attempt in range(3):
+        connection = factory(host, timeout=10)
+        phase = "connect"
+        delay = None
+        try:
+            connection.connect()
+            connection.sock.settimeout(60)
+            phase = "send"
+            connection.request("GET", "/v1/api/result?id=" + task_id,
+                               headers={"Accept": "application/json", "Authorization": f"Bearer {key}"})
+            phase = "response"
+            response = connection.getresponse()
+            if response.status in (429, 500, 502, 503, 504) and attempt < 2:
+                delay = _retry_delay(response.getheader("Retry-After"), attempt)
+            elif response.status != 200:
+                raise ImageAPIError(f"GrsAI result query returned HTTP {response.status}; generation was not repeated.")
+            else:
+                phase = "read"
+                result = json.loads(_bounded_read(response, JSON_LIMIT))
+                if not isinstance(result, dict):
+                    raise ImageAPIError("GrsAI returned an invalid task result.")
+                return result
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            if attempt == 2:
+                raise ImageAPIError(
+                    f"GrsAI result query was interrupted during {phase} ({type(error).__name__}) "
+                    "after 3 query attempts; generation was not repeated."
+                ) from None
+            delay = _retry_delay(None, attempt)
+        finally:
+            connection.close()
+        if delay is not None:
+            sleep(delay)
+    raise ImageAPIError("GrsAI result query retry limit reached; generation was not repeated.")
+
+
 def _grs_result(result: dict, key: str, host: str, *, connection_factory=None, sleep=time.sleep) -> dict:
     if result.get("status") in ("succeeded", "success"):
         return result
@@ -261,28 +313,17 @@ def _grs_result(result: dict, key: str, host: str, *, connection_factory=None, s
     task_id = result.get("id")
     if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", task_id):
         raise ImageAPIError("GrsAI did not return a valid task id.")
-    factory = connection_factory or http.client.HTTPSConnection
+    deadline = time.monotonic() + 600
     for _ in range(120):
+        if time.monotonic() >= deadline:
+            break
         sleep(5)
-        connection = factory(host, timeout=10)
-        try:
-            connection.connect(); connection.sock.settimeout(60)
-            connection.request("GET", "/v1/api/result?id=" + task_id, headers={"Accept": "application/json", "Authorization": f"Bearer {key}"})
-            response = connection.getresponse()
-            if response.status != 200:
-                raise ImageAPIError(f"GrsAI result query returned HTTP {response.status}.")
-            result = json.loads(_bounded_read(response, JSON_LIMIT))
-            if not isinstance(result, dict):
-                raise ImageAPIError("GrsAI returned an invalid task result.")
-            if result.get("status") in ("succeeded", "success"):
-                return result
-            if result.get("status") not in ("running", "pending", "processing", "queued"):
-                raise ImageAPIError("GrsAI image task failed or returned an unknown status.")
-        except (OSError, http.client.HTTPException, ValueError):
-            raise ImageAPIError("GrsAI result query was interrupted; generation was not repeated.") from None
-        finally:
-            connection.close()
-    raise ImageAPIError("GrsAI image task is still pending after ten minutes; generation was not repeated.")
+        result = _query_grs_task(task_id, key, host, connection_factory=connection_factory, sleep=sleep)
+        if result.get("status") in ("succeeded", "success"):
+            return result
+        if result.get("status") not in ("running", "pending", "processing", "queued"):
+            raise ImageAPIError("GrsAI image task failed or returned an unknown status.")
+    raise ImageAPIError("GrsAI image task exceeded the result-query wait limit; generation was not repeated.")
 
 
 def _public_ip(value: str) -> bool:

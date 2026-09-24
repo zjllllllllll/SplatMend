@@ -94,13 +94,13 @@ class ImageTests(unittest.TestCase):
     def test_all_models_support_view_sizes(self):
         for model in api.MODELS:
             for width, height in [(2560, 1440), (2048, 1536), (2048, 2048)]:
-                self.assertIn(":" if model == "gpt-image-2" else "x", api.model_size(model, width, height))
+                self.assertIn("x", api.model_size(model, width, height))
         with self.assertRaises(api.ImageAPIError):
             api.model_size("not-a-model", 100, 100)
 
     def test_provider_supported_aspect_ratios_and_sizes(self):
         expected = {"doubao-seedream-5-0-260128": ["2848x1600", "2304x1728", "2048x2048"],
-                    "gpt-image-2": ["16:9", "4:3", "1:1"]}
+                    "gpt-image-2": ["1672x941", "1443x1090", "1024x1024"]}
         self.assertEqual(set(api.MODELS), set(expected))
         for model, sizes in expected.items():
             actual = [api.model_size(model, *size) for size in [(2560, 1440), (2048, 1536), (2048, 2048)]]
@@ -156,6 +156,48 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(factory.call_count, 2)
         self.assertEqual(factory.call_args_list[1].args[0], api.ENDPOINTS["gpt-image-2"][0])
 
+    def test_grsai_host_is_configurable_only_to_official_nodes(self):
+        completed = {"id": "task-1", "status": "succeeded", "results": []}
+        with patch.dict("os.environ", {"GRSAI_API_HOST": "grsai.dakka.com.cn"}):
+            factory = Mock(return_value=Connection(Response(body=json.dumps(completed).encode())))
+            self.assertEqual(api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory), completed)
+            factory.assert_called_once_with("grsai.dakka.com.cn", timeout=10)
+        with patch.dict("os.environ", {"GRSAI_API_HOST": "untrusted.example"}):
+            factory = Mock()
+            with self.assertRaises(api.ImageAPIError):
+                api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory)
+            factory.assert_not_called()
+    def test_grsai_falls_back_only_before_submission(self):
+        completed = {"id": "task-1", "status": "succeeded", "results": []}
+        first = Connection(Response())
+        first.connect = Mock(side_effect=PermissionError("SECRET_URL"))
+        second = Connection(Response(body=json.dumps(completed).encode()))
+        factory = Mock(side_effect=[first, second])
+        self.assertEqual(api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory), completed)
+        self.assertEqual([call.args[0] for call in factory.call_args_list],
+                         ["grsaiapi.com", "grsai.dakka.com.cn"])
+        first.request.assert_not_called()
+        second.request.assert_called_once()
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+
+        blocked = [Connection(Response()) for _ in range(2)]
+        for connection in blocked:
+            connection.connect = Mock(side_effect=PermissionError("SECRET_URL"))
+        factory = Mock(side_effect=blocked)
+        with self.assertRaises(api.ImageAPIError) as caught:
+            api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory)
+        self.assertIn("No generation request was sent", str(caught.exception))
+        self.assertNotIn("SECRET", str(caught.exception))
+        self.assertTrue(all(not connection.request.called for connection in blocked))
+
+        sent = Connection(Response())
+        sent.request.side_effect = ConnectionResetError("SECRET_URL")
+        factory = Mock(return_value=sent)
+        with self.assertRaises(api.ImageAPIError) as caught:
+            api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory)
+        factory.assert_called_once()
+        self.assertIn("may have been billed", str(caught.exception))
     def test_grsai_result_and_proxy_cdn_restriction(self):
         raw = png()
         url = "https://file1.aitohumanize.com/image.png"
@@ -165,6 +207,52 @@ class NetworkTests(unittest.TestCase):
         self.assertFalse(api._allowed_download_ip("other.tos-cn-beijing.volces.com", "198.18.0.88"))
         self.assertFalse(api._allowed_download_ip("internal.example", "198.18.0.88"))
         self.assertFalse(api._allowed_download_ip("file1.aitohumanize.com", "127.0.0.1"))
+
+    def test_grsai_query_disconnect_retries_same_task_without_another_post(self):
+        pending = Response(body=b'{"id":"task-1","status":"running"}')
+        completed = {"id": "task-1", "status": "succeeded", "results": []}
+        connections = [Connection(pending), Connection(api.http.client.RemoteDisconnected("SECRET_URL")),
+                       Connection(Response(body=json.dumps(completed).encode()))]
+        factory = Mock(side_effect=connections)
+        sleeper = Mock()
+        result = api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory, sleep=sleeper)
+        self.assertEqual(result, completed)
+        self.assertEqual([c.request.call_args.args[0] for c in connections], ["POST", "GET", "GET"])
+        self.assertTrue(all(c.request.call_args.args[1] == "/v1/api/result?id=task-1" for c in connections[1:]))
+        self.assertEqual([c.args[0] for c in sleeper.call_args_list], [5, 2])
+        for connection in connections:
+            connection.close.assert_called_once()
+
+    def test_grsai_query_transient_http_retries_but_permanent_errors_stop(self):
+        for code in (429, 500, 502, 503, 504):
+            with self.subTest(code=code):
+                factory = Mock(side_effect=[Connection(Response(code, headers={"Retry-After": "600"})),
+                                           Connection(Response(body=b'{"status":"succeeded"}'))])
+                sleeper = Mock()
+                result = api._query_grs_task("task-1", "TEST_SECRET", "gateway.example", connection_factory=factory, sleep=sleeper)
+                self.assertEqual(result["status"], "succeeded")
+                sleeper.assert_called_once_with(30)
+        for code in (400, 401, 403, 404):
+            factory = Mock(return_value=Connection(Response(code)))
+            with self.subTest(code=code), self.assertRaises(api.ImageAPIError):
+                api._query_grs_task("task-1", "TEST_SECRET", "gateway.example", connection_factory=factory, sleep=Mock())
+            factory.assert_called_once()
+
+    def test_grsai_query_retry_exhaustion_is_bounded_and_redacted(self):
+        connections = [Connection(Response(body=b'{"id":"task-1","status":"running"}'))]
+        connections.extend(Connection(socket.timeout("SECRET_URL")) for _ in range(3))
+        factory = Mock(side_effect=connections)
+        with self.assertRaises(api.ImageAPIError) as caught:
+            api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory, sleep=Mock())
+        self.assertIn("after 3 query attempts", str(caught.exception))
+        self.assertNotIn("SECRET", str(caught.exception))
+        self.assertEqual([c.request.call_args.args[0] for c in connections], ["POST", "GET", "GET", "GET"])
+
+    def test_grsai_submission_disconnect_is_not_automatically_resubmitted(self):
+        factory = Mock(return_value=Connection(api.http.client.RemoteDisconnected("SECRET_URL")))
+        with self.assertRaises(api.ImageAPIError):
+            api.post_edit({"model": "gpt-image-2"}, "TEST_SECRET", connection_factory=factory, sleep=Mock())
+        factory.assert_called_once()
 
     def test_retry_only_explicit_transient_statuses(self):
         for code in (429,):
@@ -214,7 +302,7 @@ class NetworkTests(unittest.TestCase):
                 self.assertEqual(body["model"], model)
                 if model == "gpt-image-2":
                     self.assertTrue(body["images"][0].startswith("data:image/png;base64,"))
-                    self.assertEqual(body["aspectRatio"], "1:1")
+                    self.assertEqual(body["aspectRatio"], "1024x1024")
                     self.assertEqual(body["replyType"], "async")
                 else:
                     self.assertTrue(body["image"].startswith("data:image/png;base64,"))

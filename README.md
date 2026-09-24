@@ -1,328 +1,177 @@
-# Gaussian Repair Studio · 单视角深度锚定补洞
+# Gaussian Repair Studio
 
-当前在 `main` 上继续开发。本地端到端工作台支持：
-打开 PLY → 圈选/框选并删除 → 一键锁定视角和导出 → 调用图片 API →
-执行原六步补洞 → 自动加载验收通过的结果。无需再向在线 SuperSplat 注入代码
-或手动整理每次任务的图片、深度、相机及 PLY。
+[English](#english) · [简体中文](#chinese)
 
-已有本机环境和已构建界面时，双击 `run_studio.cmd`；缺少权重时启动入口会自动下载并校验。首次构建运行
-`build_studio.cmd`。提示词从根目录 `prompt.txt` 读取。Seedream 使用 `ark-key.txt`（火山引擎），
-GPT Image 2 使用 `grs-key.txt`（GrsAI）；两者均不使用 OSS。完整启动、模型尺寸、
-失败恢复与当前验收状态见 [STUDIO.md](STUDIO.md)。
+<a id="english"></a>
+## English
 
-原数值脚本、模型和 `run_sample.cmd` 参数不变。下文保留原算法、数据契约及
-手工运行说明，供复现与诊断使用。当前图片 API 路由已改为火山引擎与 GrsAI；Git 推送按用户指示执行。
+Gaussian Repair Studio is a local Windows tool for repairing a hole in a 3D Gaussian Splatting (3DGS) scene. Open a PLY, select and delete an area, lock a camera view, generate a repaired RGB image with an image API, complete depth with LingBot-Depth, and generate an append-only SHARP Gaussian patch. The accepted result loads in the viewer and can be downloaded as a PLY.
 
-本仓库是当前已验证的补洞链路最小工程版：在一个带洞视角中合成修复 RGB，用 LingBot 补齐相机深度，再让 SHARP 在生成阶段直接接受这张完整深度；最后按二维洞区与六级边缘带裁出 SHARP 高斯，并原位追加到原场景。链路不再做 ICP、生成后深度缩放、整体平移或 Poisson 后校正。
+**Platform and limits.** The verified setup is Windows, an NVIDIA RTX 5070 Ti (`sm_120`), CUDA Toolkit 12.8, Visual Studio 2022 Build Tools, and Python 3.13.13. Other GPUs/OSes have not been verified. Image generation uses a third-party provider and may incur charges. Model weights, API keys, local scenes and outputs are not included in Git.
 
-2026-08-28 已在本地 `assets` 示例上，用 `run_demo.cmd` 从第 1 步连续跑到第 6 步，最终状态为 `PIPELINE_ACCEPTED`。
+### 1. Install the Windows/Python environment
 
-## SHARP 是否在仓库里
+Install [Miniforge](https://github.com/conda-forge/miniforge), [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the C++ desktop workload, and the [CUDA 12.8 Toolkit](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-installation-guide-microsoft-windows/index.html). In **Miniforge Prompt**, create a new environment and install the verified package versions:
 
-在。为了避免算法逻辑依赖另一份本地 checkout，仓库已经包含运行所需的两套模型源码；模型权重体积较大，不随公开仓库上传，需要使用者自行放到指定位置：
-
-- `third_party/ml-sharp`：SHARP 源码、Windows/gsplat 兼容修改和原始许可证；
-- `third_party/lingbot-depth`：LingBot-Depth 源码、无 xFormers 的 Windows fallback 和许可证。
-
-运行脚本会把仓库内的 `third_party/ml-sharp/src` 放在 `PYTHONPATH` 最前面，不会退回已安装的 `sharp`，也不会引用旧的 `sharp_sd2_test`、`real-gauss-hole` 或其他工程目录。
-
-注意：SHARP 模型权重只允许用于非商业科研用途，具体条款见 `third_party/ml-sharp/LICENSE_MODEL`。本地示例数据和两个模型权重均不在公开仓库中。
-
-## 目录结构
-
-```text
-.
-├─ assets/                         仅本地保留的示例输入，Git 忽略
-├─ studio/                         本地 Viewer、图片 API、任务调度和测试
-├─ run_studio.cmd                  端到端工作台启动入口
-├─ download_models.cmd             首次启动时下载并校验两个模型权重
-├─ build_studio.cmd                前端依赖锁定安装与构建
-├─ STUDIO.md                       工作台使用、模型配置和验收状态
-├─ third_party/
-│  ├─ ml-sharp/                    SHARP 源码、许可证；权重需自行放置
-│  └─ lingbot-depth/               LingBot 源码、许可证；权重需自行放置
-├─ prepare_depth_anchored_inputs.py  构造 Mask、精确合成 RGB、构造带洞深度
-├─ run_lingbot_depth.py            LingBot RGB-D 深度补全适配器
-├─ fuse_and_validate_depth.py      深度标定、边界融合与验收
-├─ run_sharp_hard_depth.py         深度锚定 SHARP 与表面 Jacobian 协方差
-├─ sharp_runtime.py                SHARP 加载、渲染及深度指标
-├─ merge_hard_patch.py             六级补丁裁剪、坐标还原、场景合并
-├─ gaussian_patch_io.py            PLY 和高斯中心/协方差坐标变换
-├─ verify_depth_anchored_sample.py 整链路不变量验收
-├─ run_sample.cmd                  通用样本入口
-├─ run_demo.cmd                    assets 示例入口
-├─ run_cuda_python.cmd             Windows CUDA/VS/Ninja 统一启动器
-├─ config.example.cmd              本机环境配置模板
-├─ requirements.txt                非 CUDA Python 依赖
-└─ WINDOWS_ENVIRONMENT.md          GPU 环境和兼容补丁说明
+```bat
+conda create -n goris python=3.13.13 -y
+conda activate goris
+python -m pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install gsplat==1.5.3
+python -m pip install -r requirements.txt
 ```
 
-仓库中没有历史运行记录、批处理结果、旧数据集、缓存或旧路线启动脚本。运行输出统一写入 `outputs/`；`outputs/` 和本地示例 `assets/` 均被 `.gitignore` 排除。
+Run these installation commands only for a **new** environment; do not reinstall over an already working one. The verified Windows build needs three compatibility adjustments in installed packages (MSVC flags in gsplat, UTF-8 compiler-output decoding in PyTorch, and the Windows `small` macro conflict). Their exact files and checks are in [AGENTS.md](AGENTS.md#verified-windows-gpu-environment). A fresh environment may need those adjustments before gsplat can compile. For the verified versions, inspect these installed files under the new environment's `Lib/site-packages/` before the first GPU run:
 
-## 快速运行
+- `gsplat/cuda/_backend.py`: on Windows, use `extra_cflags = ["/O2"] if os.name == "nt" else [opt_level, "-Wno-attributes"]`; do not pass GCC's `-Wno-attributes` to MSVC.
+- `torch/utils/cpp_extension.py`: set `SUBPROCESS_DECODE_ARGS = ('utf-8',) if IS_WINDOWS else ()` and use `.decode(*SUBPROCESS_DECODE_ARGS)` for compiler output.
+- `torch/include/c10/cuda/CUDACachingAllocator.h`: rename the `StreamSegmentSize` boolean parameter/member using `small` to `small_pool`/`is_small_pool` to avoid the Windows SDK macro.
 
-### 1. 配置本机环境
+These are compatibility edits to a **new** installation, not commands to run against an already working environment. Preserve the normal Torch extension cache after a successful compile.
 
-当前验证环境见 `WINDOWS_ENVIRONMENT.md`。如果路径与示例机器不同：
+From the repository root, copy the path template and edit its three values if your machine differs:
 
 ```bat
 copy config.example.cmd config.local.cmd
-```
-
-然后编辑 `config.local.cmd` 中的 Python 环境、VS 2022 和 CUDA 12.8 路径。`config.local.cmd` 已被 Git 忽略。
-
-先检查启动环境：
-
-```bat
 run_cuda_python.cmd
 ```
 
-成功时输出 `ENVIRONMENT_OK`。
-
-### 2. 自动下载模型权重
-
-首次运行 `run_studio.cmd` 或 `run_sample.cmd` 时，会自动下载并校验下面两个文件；也可提前单独运行 `download_models.cmd`。路径和文件名必须完全一致：
-
-| 模型 | 放置位置（仓库根目录相对路径） | 大小 | SHA256 |
-|---|---|---:|---|
-| SHARP | `third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt` | 2,809,738,232 bytes | `94211a75198c47f61fca7d739ba08a215418d8d398d48fddf023baccc24f073d` |
-| LingBot-Depth | `third_party/lingbot-depth/model/lingbot-depth/model.pt` | 1,284,837,952 bytes | `b60cf27ddbd0e51e9b59b03475c0d39d02d2e48ecf8dbb5866f04d46802b3c23` |
-
-两个路径已写入 `.gitignore`，下载后不会被误提交。脚本使用 Apple 官方 SHARP 地址和固定版本的 Hugging Face LingBot-Depth v0.5；已有文件校验通过时跳过下载，下载中断可重新运行以续传，校验失败不会替换现有文件。权重来源和使用权限应分别遵循 SHARP 与 LingBot-Depth 的原始许可证。
-
-### 3. 跑本地示例
+`config.local.cmd` is ignored by Git. `GORIS_ROOT` is the Miniforge environment directory, `VCVARS64` is the VS x64 compiler setup batch file, and `CUDA_HOME` is the toolkit directory. The launcher must print `ENVIRONMENT_OK`. **Always use `run_cuda_python.cmd` for Python commands that may import torch, gsplat, SHARP or LingBot**; it sets the verified x64 compiler, CUDA, Ninja, `sm_120`, `PYTHONPATH`, and offline model mode. To check that gsplat's compiled backend loads:
 
 ```bat
-run_demo.cmd
+run_cuda_python.cmd -c "from gsplat.cuda._backend import _C; print(_C.__file__)"
 ```
 
-示例数据不随公开仓库分发；本地已有 `assets/` 完整示例时才能运行。默认输出到 `outputs/demo`。如需指定临时目录：
+The result should be a `gsplat_cuda.pyd` path, not `None`. The launcher and [AGENTS.md](AGENTS.md) describe the exact preflight and compatibility boundaries.
+
+### 2. Install the web viewer
+
+Install [Node.js](https://nodejs.org/en/download) **20.19 or newer**. From the repository root, run:
 
 ```bat
-run_demo.cmd D:\temp\gaussian-hole-demo
+build_studio.cmd
 ```
 
-若权重下载或 SHA256 校验失败，入口会停止并显示错误；网络恢复后可重新运行。
+This runs `npm ci --no-audit --no-fund` against `studio/web/package-lock.json` and builds `studio/web/dist/`. It does not install Python/CUDA packages. After changing front-end source, run it again and refresh the browser. Equivalent manual commands in `studio/web/`: `npm.cmd ci --no-audit --no-fund`, then `npm.cmd run build`.
 
-### 4. 跑自定义样本
+### 3. Download model weights
+
+From the repository root, run `download_models.cmd`. `run_studio.cmd` and `run_sample.cmd` call it automatically. The script downloads, resumes interrupted transfers, checks exact size and SHA-256, and skips already verified files. `download_models.cmd -VerifyOnly` checks local files without downloading.
+
+| Model | Official manual download | Save **exactly** here (relative to repo root) | Bytes | SHA-256 |
+|---|---|---|---:|---|
+| Apple SHARP | [Apple checkpoint](https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt) | `third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt` | 2,809,738,232 | `94211a75198c47f61fca7d739ba08a215418d8d398d48fddf023baccc24f073d` |
+| LingBot-Depth v0.5 | [Hugging Face model.pt](https://huggingface.co/robbyant/lingbot-depth-pretrain-vitl-14-v0.5/blob/79204ed6b837f4fdd192cf563e59481fecfa0295/model.pt) | `third_party/lingbot-depth/model/lingbot-depth/model.pt` | 1,284,837,952 | `b60cf27ddbd0e51e9b59b03475c0d39d02d2e48ecf8dbb5866f04d46802b3c23` |
+
+If the script cannot access either host, use the links above in a browser, create the destination directories, save each file with the exact name, and run `download_models.cmd -VerifyOnly`. A Hugging Face login/network route may be needed. Do **not** save the small Git/Xet pointer instead of the 1.28 GB LingBot file. Weights are ignored by Git. SHARP weights carry a **non-commercial research-only** model license; read `third_party/ml-sharp/LICENSE_MODEL` before downloading or using them.
+
+### 4. Obtain an image API key
+
+To use **GrsAI GPT Image 2**, visit [GrsAI](https://grsai.ai/), register or sign in, open the [API Keys dashboard](https://grsai.ai/zh/dashboard/api-keys), create/copy an API key, and put only that key in `grs-key.txt` at the repository root. The site may require credits for calls. The project sends requests to `https://grsaiapi.com/v1/api/generate` using model `gpt-image-2`. To use GrsAI's China node, set `GRSAI_API_HOST=grsai.dakka.com.cn` in `config.local.cmd`; generation and result queries then use that same node. If the preferred node cannot connect before the generation request is sent, the tool tries the other official node once; it never resubmits after sending request bytes. GrsAI is a third-party service; its key is not an OpenAI API key.
+
+Alternatively, for **Volcengine Seedream 5.0**, provide a key in root-level `ark-key.txt`. The app uses the `ARK_API_KEY` or `GRSAI_API_KEY` environment variable when the corresponding file is absent. Both key files are ignored by Git. Configure at least the key for the image model you intend to use. The rendered RGB image is sent to the selected provider; the PLY and local outputs stay on your machine.
+
+### 5. Start and use the tool
 
 ```bat
-run_sample.cmd SAMPLE_ID SAMPLE_DIR REPAIRED_RGB OUTPUT_DIR
+run_studio.cmd
 ```
 
-例如：
+Leave that command window open, then use `http://127.0.0.1:8765/`. The service listens on localhost. If port 8765 is occupied, run `run_studio.cmd --port 8766` and open `http://127.0.0.1:8766/` instead. The web UI defaults to **English**; choose **中文** in the header to switch languages. The browser remembers your choice.
+
+1. Click **Open PLY file** and load a standard, uncompressed Gaussian PLY. The source file is not modified.
+2. Choose the camera view. Orbit with left drag, pan with right drag, zoom with the wheel; use WASD and Q/E to move. Use **Lasso** or **Rectangle** to select the area to remove, then **Delete selected**. Selection reaches occluded Gaussians under the selected screen region. Shift adds and Ctrl removes from the selection; Undo restores deletions.
+3. Select the image model and locked-view output size, review the prompt (default `prompt.txt`), then click **Start repair**. The app saves the locked RGB, depth, camera, deletion mask and PLY with the hole. It calls the image API, color-corrects the result, and runs the original six-step depth-anchored pipeline.
+4. Follow the 11-step progress panel. Only an accepted result is loaded. Use **Download result PLY**; generated files and logs stay under ignored `outputs/studio/`. A task URL `http://127.0.0.1:8765/?job=<job-id>` reopens that local task. If possible, retry an image download or rerun the 3D pipeline without generating another image.
+
+The **Open local sample** button appears only when local `assets/point_cloud.ply` and `assets/point_cloud.camera.json` exist. `assets/` is ignored and is **not distributed** with the public repository. You can use your own PLY without it. `run_demo.cmd` needs a complete local sample; `run_sample.cmd SAMPLE_ID SAMPLE_DIR REPAIRED_RGB OUTPUT_DIR` runs the six-step numeric pipeline on prepared inputs.
+
+### Validation and files
+
+Run backend tests from the repository root with `run_cuda_python.cmd -m unittest discover -s studio/tests -v`. In `studio/web`, run `npm.cmd test`, `npm.cmd run check`, and `npm.cmd run build`. `requirements.txt` pins non-GPU Python packages; `config.example.cmd` provides machine paths; `package-lock.json` pins browser dependencies. CUDA/PyTorch/gsplat are intentionally separate because Windows fixes are required.
+
+The numeric input directory for `run_sample.cmd` needs `point_cloud.png` (RGBA hole), `point_cloud.depth.npy` (aligned camera-Z depth), `point_cloud.camera.json` (intrinsics/extrinsics), and `point_cloud.ply` (base Gaussians), plus a same-view repaired RGB image. The six stages prepare a strict mask and RGB-D input, complete depth with LingBot, align/validate depth, generate depth-anchored SHARP Gaussians, crop and blend a six-ring patch, then append and validate the final PLY. Base Gaussians are retained.
+
+### Licensing and third-party notices
+
+This repository currently has **no project-level LICENSE** for its own code. Choose one before describing the project itself as open source. Vendored source retains its own terms: Apple SHARP source in `third_party/ml-sharp/LICENSE`, SHARP weights in `third_party/ml-sharp/LICENSE_MODEL`, LingBot-Depth in `third_party/lingbot-depth/LICENSE` and `LEGAL.md`, and the SuperSplat viewer in `studio/web/vendor/supersplat/LICENSE`. SHARP model use is restricted to non-commercial research/academic development and requires the attribution stated in its model license: `Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.` See `studio/web/vendor/UPSTREAM.md` and `studio/web/vendor/supersplat/LOCAL_CHANGES.md` for viewer provenance and local changes. Do not publish local `assets/`, API keys or weights without the necessary rights.
+
+---
+
+<a id="chinese"></a>
+## Chinese
+
+**简体中文**
+
+Gaussian Repair Studio 是在 Windows 本机运行的 3D Gaussian Splatting（3DGS）补洞工具：打开 PLY，圈选/框选并删除目标区域，锁定视角，通过图片 API 修复 RGB，再用 LingBot-Depth 补深度、SHARP 生成高斯补丁。通过验收的结果会加载到网页，并可下载 PLY。
+
+**已验证平台与边界：**Windows、RTX 5070 Ti（`sm_120`）、CUDA Toolkit 12.8、VS 2022 Build Tools、Python 3.13.13。其他 GPU/系统尚未验证。图片 API 由第三方提供，可能产生费用。模型权重、密钥、本地场景与输出均不随 Git 分发。
+
+### 1. 安装 Windows / Python 环境
+
+安装 [Miniforge](https://github.com/conda-forge/miniforge)、含“使用 C++ 的桌面开发”工作负载的 [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)，以及 [CUDA 12.8 Toolkit](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-installation-guide-microsoft-windows/index.html)。在 **Miniforge Prompt** 中为新机器创建环境：
 
 ```bat
-run_sample.cmd 7 D:\data\sample_07 D:\data\sample_07\repaired_rgb.png D:\results\sample_07
+conda create -n goris python=3.13.13 -y
+conda activate goris
+python -m pip install torch==2.11.0+cu128 torchvision==0.26.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install gsplat==1.5.3
+python -m pip install -r requirements.txt
 ```
 
-只有全部六个阶段及最终不变量检查通过，入口才会输出 `PIPELINE_ACCEPTED` 并返回退出码 0。
+这些安装命令只用于**新环境**，不要覆盖已经能运行的环境。已验证的 Windows 环境还需要修改已安装包的三个兼容问题：gsplat 的 MSVC 编译参数、PyTorch 编译输出的 UTF-8 解码、Windows `small` 宏冲突。具体位置与检查见 [AGENTS.md](AGENTS.md#verified-windows-gpu-environment)。新环境首次编译 gsplat 前可能需要完成这些修改。针对上述已验证版本，可在新环境的 `Lib/site-packages/` 中核对：`gsplat/cuda/_backend.py` 的 Windows 编译参数用 `/O2` 而不是 GCC 的 `-Wno-attributes`；`torch/utils/cpp_extension.py` 使用 `SUBPROCESS_DECODE_ARGS = ('utf-8',) if IS_WINDOWS else ()` 解码编译器输出；`torch/include/c10/cuda/CUDACachingAllocator.h` 的 `StreamSegmentSize` 布尔参数/成员避免使用 Windows SDK 的 `small` 宏名，改为 `small_pool` / `is_small_pool`。只在**新环境**中处理这些兼容问题，已跑通的环境不要重装或覆盖；成功后保留标准 Torch 扩展缓存。
 
-## 输入数据契约
+在仓库根目录复制路径模板，按本机安装位置修改 `GORIS_ROOT`、`VCVARS64`、`CUDA_HOME`：
 
-每个 `SAMPLE_DIR` 必须含以下四个同视角、同分辨率文件：
-
-| 文件 | 含义 | 强约束 |
-|---|---|---|
-| `point_cloud.png` | 删除物体后的场景 RGBA 渲染 | Alpha 表示洞区；RGB 与深度逐像素配准 |
-| `point_cloud.depth.npy` | 原场景相机 Z 深度 | 前两维为 H×W；洞外有效深度必须保留 |
-| `point_cloud.camera.json` | 相机和导出元数据 | 必须含 `intrinsic_K_opencv` 及相机外参/矩阵 |
-| `point_cloud.ply` | 已经删除目标物体的基础高斯场景 | 最终采用 append-only，基础高斯不会再被删除或修改 |
-
-另需一张 `REPAIRED_RGB`：外部二维修复模型生成的完整 RGB。它必须和 `point_cloud.png` 宽高一致。该模型可以不知道深度，但应尽量保证洞内内容合理；代码只接受它在权威洞区内的像素，洞外强制换回原图。
-
-`assets/README.md` 给出了仓库示例的文件大小与 SHA256。
-
-## 当前算法链路
-
-```text
-带洞 RGBA + 原深度 + 相机 + Base PLY + 修复 RGB
-        │
-        ├─ 1. 构造 Core / Authority / 48 px Context
-        │     洞内取修复 RGB，洞外逐像素保留原 RGB；Authority 内深度清零
-        │
-        ├─ 2. LingBot 根据完整 RGB、带洞深度、Mask、K 预测缺失 camera-Z
-        │
-        ├─ 3. 在 Context 上标定尺度/偏移，洞内边缘 16 px 过渡
-        │     得到洞外严格等于原值的完整深度
-        │
-        ├─ 4. SHARP 生成全图高斯；Layer-0 中心直接锚定完整深度
-        │     再按目标深度表面 Jacobian 修正高斯协方差；Layer-1 关闭
-        │
-        ├─ 5. 从 Layer-0 取 Authority + 外扩 150 px 六环
-        │     六环仅衰减 opacity，随后用相机逆变换还原到场景坐标
-        │
-        └─ 6. Final PLY = Base PLY + Patch，并检查全部算法不变量
+```bat
+copy config.example.cmd config.local.cmd
+run_cuda_python.cmd
 ```
 
-### 第 1 步：Mask 与严格 RGB-D 输入
+`config.local.cmd` 被 Git 忽略。启动器应输出 `ENVIRONMENT_OK`。任何可能导入 torch、gsplat、SHARP、LingBot 的 Python 命令都要从仓库根目录通过 `run_cuda_python.cmd` 执行。检查 gsplat：
 
-代码：`prepare_depth_anchored_inputs.py`
-
-输入：带洞 RGBA、外部修复 RGB、原深度、相机 JSON。
-
-Mask 定义：
-
-1. `Core`：取 `alpha <= 204`（即透明度至少 20%）中的最大连通域，排除零散透明噪声；
-2. `Authority`：取所有 `alpha < 255` 且与 Core 连通的区域。这是正式洞区，也是 RGB 与深度允许被替换的唯一内部区域；
-3. `Context`：Authority 向外膨胀 48 个原图像素后减去 Authority，仅用于把 LingBot 深度标定到原场景尺度；
-4. 150 px 的边缘 Blend 不在本步生成，它在第 5 步从 Authority 向外建立。
-
-RGB 合成是严格的：
-
-```text
-rgb_completed_exact[p] = repaired_rgb[p]，p ∈ Authority
-rgb_completed_exact[p] = source_rgb[p]，  p ∉ Authority
+```bat
+run_cuda_python.cmd -c "from gsplat.cuda._backend import _C; print(_C.__file__)"
 ```
 
-因此 SHARP 看到的是一张完整 RGB；洞外像素与原图逐通道完全一致。深度输入则把 Authority 内置 0，Authority 外逐值保留原深度。
+输出应为 `gsplat_cuda.pyd` 路径，而不是 `None`。
 
-主要输出：`rgb_completed_exact.png`、`hole_core.png`、`hole_authority.png`、`context_ring.png`、`depth_observed_with_hole.npy`、`intrinsics.txt`、`preparation_report.json`。
+### 2. 安装网页依赖
 
-### 第 2 步：LingBot 补相机深度
+安装 [Node.js](https://nodejs.org/en/download) **20.19 或更新版本**，在仓库根目录运行 `build_studio.cmd`。它根据 `studio/web/package-lock.json` 执行 `npm ci` 并生成 `studio/web/dist/`，不会安装 Python/CUDA 包。修改前端源码后重新构建并刷新网页。手动等价命令是在 `studio/web` 中执行 `npm.cmd ci --no-audit --no-fund`、`npm.cmd run build`。
 
-代码：`run_lingbot_depth.py`，模型代码位于 `third_party/lingbot-depth`。
+### 3. 下载两个模型权重
 
-LingBot 接收完整 RGB、Authority 内为 0 的观测深度、Authority Mask 和相机内参，预测一张稠密深度。这里使用 LingBot 而不是豆包补深度；豆包/其他外部二维模型只负责 `repaired_rgb.png`。
+在仓库根目录运行 `download_models.cmd`。`run_studio.cmd` 与 `run_sample.cmd` 启动时也会自动调用；脚本支持断点续传、文件大小和 SHA-256 校验。已有文件验证通过就跳过。只检查不下载：`download_models.cmd -VerifyOnly`。
 
-本步只提供候选几何，不能直接作为最终场景深度，因为模型输出仍可能存在尺度与偏移误差。输出为 `lingbot_raw_depth.npy`、模型有效 Mask、预览和 `lingbot_manifest.json`。
+| 模型 | 脚本失效时的官方下载页 | 必须放到仓库内的准确路径 | 字节数 | SHA-256 |
+|---|---|---|---:|---|
+| Apple SHARP | [Apple 权重直链](https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh.pt) | `third_party/ml-sharp/ckpt/sharp_2572gikvuh.pt` | 2,809,738,232 | `94211a75198c47f61fca7d739ba08a215418d8d398d48fddf023baccc24f073d` |
+| LingBot-Depth v0.5 | [Hugging Face model.pt](https://huggingface.co/robbyant/lingbot-depth-pretrain-vitl-14-v0.5/blob/79204ed6b837f4fdd192cf563e59481fecfa0295/model.pt) | `third_party/lingbot-depth/model/lingbot-depth/model.pt` | 1,284,837,952 | `b60cf27ddbd0e51e9b59b03475c0d39d02d2e48ecf8dbb5866f04d46802b3c23` |
 
-### 第 3 步：深度标定与边界融合
+如果脚本无法访问下载站，就在浏览器打开上面的链接，创建对应目录，按表中**完全一致**的文件名保存，再运行 `download_models.cmd -VerifyOnly`。Hugging Face 可能需要登录或合适的网络线路；不要把很小的 Git/Xet 指针文件误当成 1.28 GB 权重。权重被 Git 忽略。SHARP 权重仅限**非商业科研用途**，下载或使用前请阅读 `third_party/ml-sharp/LICENSE_MODEL`。
 
-代码：`fuse_and_validate_depth.py`
+### 4. 申请图片 API
 
-在 48 px Context 中，用同时有效的“LingBot 预测深度 x”和“原场景深度 y”稳健拟合仿射关系：
+使用 **GrsAI GPT Image 2**：访问 [GrsAI 官网](https://grsai.ai/)，注册并登录，打开 [API Key 控制台](https://grsai.ai/zh/dashboard/api-keys)，创建/复制密钥，把密钥单独写入仓库根目录 `grs-key.txt`。平台可能按积分收费。本项目用模型 `gpt-image-2` 请求 `https://grsaiapi.com/v1/api/generate`。如果国内节点在本机可达，可在 `config.local.cmd` 设置 `GRSAI_API_HOST=grsai.dakka.com.cn`；提交和结果查询会使用同一节点。如果首选节点在发送生图请求前无法连接，工具会尝试另一个官方节点；请求一旦发出就不会跨节点重复提交，以免重复扣费。GrsAI 是第三方服务，它的密钥与 OpenAI 官方 API Key 不通用。
 
-```text
-z_scene = scale × z_lingbot + offset
-```
+也可以使用**火山引擎 Seedream 5.0**，把相应密钥写入根目录 `ark-key.txt`。没有密钥文件时可分别用 `GRSAI_API_KEY` / `ARK_API_KEY` 环境变量；文件优先。两个密钥文件均被 Git 忽略。至少配置你要选择的模型对应的密钥。锁定视角的 RGB 会发给所选服务；PLY 和本机输出留在本地。
 
-然后：
+### 5. 启动并使用网页
 
-- Authority 内使用标定后的补全深度；
-- 洞内靠边 16 px 根据距边界距离，在补全深度和邻近原深度之间平滑过渡；
-- Authority 外强制复制原深度，不允许模型改动；
-- 对残余无效洞像素才做受 Mask 约束的补值；
-- 用边界跳变、平面法向/残差、深度范围和洞内覆盖率做验收。
+在仓库根目录运行 `run_studio.cmd`，保持命令窗口开启，再访问 `http://127.0.0.1:8765/`。服务只监听本机。如果 8765 被占用，可运行 `run_studio.cmd --port 8766`，改为访问 `http://127.0.0.1:8766/`。网页**默认英文**，右上角选择 **中文** 即可切换，浏览器会记住选择。
 
-输出两张完整深度：`depth_completed_exact.npy` 用于最终补丁检查，`depth_completed_sharp_dense.npy` 用于 SHARP；当前示例中二者都没有改动 Authority 外像素。
+1. 点击“打开 PLY 文件”，加载标准、未压缩的 Gaussian PLY；原文件不会修改。
+2. 选好视角：左键旋转、右键平移、滚轮缩放，WASD 与 Q/E 移动。使用“圈选”或“框选”选中需要移除的区域，再点击“删除选中”。区域选择会穿透遮挡层；Shift 添加、Ctrl 移除，误删可撤销。
+3. 选择图片模型和锁定视图尺寸，检查提示词（默认来自 `prompt.txt`），点击“开始补洞”。工具保存 RGB、深度、相机、删除记录和带洞 PLY，调用图片 API、做颜色校正，再运行原六步深度锚定管线。
+4. 查看 11 步进度；只有通过验收的结果才会自动加载。点击“下载结果 PLY”。产物与日志在被 Git 忽略的 `outputs/studio/`。任务链接 `http://127.0.0.1:8765/?job=<任务ID>` 可恢复本机旧任务。符合条件时可只重试下载修复图，或复用已有图片重跑三维管线，不会重新生图。
 
-### 第 4 步：深度锚定的 SHARP 高斯生成
+只有本机同时存在 `assets/point_cloud.ply` 和 `assets/point_cloud.camera.json` 时，网页才显示“打开本地示例”。**公开仓库不提供 `assets/`**，直接打开自己的 PLY 即可。`run_demo.cmd` 需要完整本地示例；`run_sample.cmd SAMPLE_ID SAMPLE_DIR REPAIRED_RGB OUTPUT_DIR` 可对准备好的输入单独运行六步数值管线。
 
-代码：`run_sharp_hard_depth.py`、`sharp_runtime.py`，SHARP 本体位于 `third_party/ml-sharp`。
+### 检查、输入与许可证
 
-输入 RGB 与深度先缩放到 1536×1536，SHARP 生成两个 768×768 高斯层，每层 589,824 个。当前链路绕过 SHARP 的 Alignment UNet，避免生成后再估计整体位置。完整深度直接作为 Layer-0 的第一表面；SHARP 单目深度只用于构造受限的第二层相对间隔。
+后端测试：在根目录运行 `run_cuda_python.cmd -m unittest discover -s studio/tests -v`。前端测试/检查：在 `studio/web` 运行 `npm.cmd test`、`npm.cmd run check`、`npm.cmd run build`。`requirements.txt` 锁定非 GPU Python 依赖，`config.example.cmd` 给出本机路径模板，`package-lock.json` 锁定网页依赖；CUDA/PyTorch/gsplat 因 Windows 兼容修改而单独安装。
 
-SHARP 仍负责预测颜色、opacity、scale、rotation 和学习到的横向射线偏移。对 Layer-0 的每个高斯（不只是洞内）执行：
+`run_sample.cmd` 的输入目录需有同视角配准的 `point_cloud.png`（RGBA 洞图）、`point_cloud.depth.npy`（相机 Z 深度）、`point_cloud.camera.json`（内外参）、`point_cloud.ply`（基础高斯），另需一张修复后的 RGB。六步依次构造严格 Mask 与 RGB-D、LingBot 补深度、深度标定和验收、SHARP 深度锚定生成、六环裁剪与合并、最终不变量验收；基础高斯保持不变。
 
-```text
-r = z_target / z_old
-P_new = r × P_old
-P_new.z = z_target
-Scale_new = r × Scale_old
-```
-
-这里沿 SHARP 已学习到的射线移动中心，所以保留其横向结构，同时让相机 Z 精确等于补好的深度。Layer-1 没有第二表面深度监督，故保留行结构但把 opacity 设为 0，防止背层产生漂浮点。
-
-仅缩放中心和 scale 仍可能让平面覆盖不足，所以随后用完整深度构造目标表面：
-
-```text
-P(u,v) = z(u,v) K⁻¹ [u,v,1]ᵀ
-J = [∂P/∂u, ∂P/∂v]
-```
-
-代码对相邻三维点做稳健有限差分，在深度断层处选择较短方向，得到两个切向量和表面法向。沿两个切向的标准差至少覆盖 0.75 个采样单元，法向厚度被限制为最小切向尺度的 0.05～0.35；最后把新协方差重新分解为 SHARP PLY 所需的 scale 与 quaternion。这个 Jacobian 影响 Layer-0 全图高斯，不只影响洞内。
-
-输出完整的两层 SHARP PLY、Layer-0 Z、渲染 RGB/Depth/Alpha 和 `sharp_hard_acceptance.json`。
-
-### 第 5 步：裁出补丁并融合边缘
-
-代码：`merge_hard_patch.py`、`gaussian_patch_io.py`
-
-补丁不是按三维包围盒或重新投影裁切，而是利用 SHARP 的固定像素行来源：
-
-1. 从 Authority 向外扩 150 个参考像素；当前参考短边为 1440，因此示例原图实际也是 150 px；
-2. 把外扩带均分为 6 个约 25 px 的环；
-3. 将标签图最近邻缩放到 SHARP 的 768×768 网格；
-4. 按像素行号直接选出对应的 Layer-0 高斯；Layer-1 不进入补丁；
-5. Authority 核心 opacity 保持 SHARP 原值，六环 opacity 依次乘：
-
-```text
-0.980324 / 0.843750 / 0.623843 / 0.376157 / 0.156250 / 0.019676
-```
-
-这 150 px 六环就是当前的边缘融合带。它不会移动高斯中心，只让越远离洞区的补丁高斯越透明，使补丁外缘逐渐交给原场景。
-
-选出的高斯仍处于 SHARP 相机坐标。代码使用相机 Model-View 的精确逆矩阵变换中心，并用同一个旋转变换协方差，再分解为 scene-space scale/quaternion。
-
-### 第 6 步：Append-only 合并和验收
-
-最终合并严格为：
-
-```text
-Final PLY = Base PLY + transformed Patch
-```
-
-基础 PLY 删除 0 个高斯、修改 0 个属性；基础高斯必须构成最终 PLY 的逐字段精确前缀。当前链路没有任何生成后对齐：无 ICP、无深度缩放/偏移、无位置平移、无 Poisson 修正。
-
-`verify_depth_anchored_sample.py` 会联合读取前五步报告和实际 PLY，检查：Mask/RGB/深度的洞外精确性、LingBot 覆盖、SHARP 深度锚定与 Jacobian 已执行、两层数量、六环非空且权重递减、补丁来自 Layer-0、中心深度误差、坐标往返误差、基础前缀不变以及最终数量守恒。
-
-## 输出目录
-
-```text
-OUTPUT_DIR/
-├─ prepared/           RGB、Core/Authority/Context、带洞深度、准备报告
-├─ depth/              LingBot 原始深度、融合深度、预览、深度验收报告
-├─ sharp_hard/         完整 SHARP PLY、Layer-0 Z、渲染与 SHARP 验收报告
-├─ fusion/             Patch PLY、Final PLY、六环可视化、合并验收报告
-└─ sample_acceptance.json
-```
-
-正式结果是 `fusion/depth_anchored_inpainted.ply`；整链路总报告是 `sample_acceptance.json`。
-
-## 随仓库示例的实测验收结果
-
-2026-08-28，2560×1440 示例：
-
-| 指标 | 结果 |
-|---|---:|
-| Authority 洞区 | 146,144 px |
-| LingBot 洞内有效覆盖率 | 100% |
-| 最终完整深度洞内覆盖率 | 100% |
-| 洞外 RGB / 深度改动像素 | 0 / 0 |
-| SHARP Layer-0 中心 Z p99 绝对误差 | 0 |
-| SHARP 洞内渲染深度中位相对误差 | 0.0618% |
-| SHARP 洞内渲染深度 p90 相对误差 | 0.2450% |
-| SHARP 洞内 Alpha 均值 | 0.997683 |
-| Base 高斯 | 2,252,716 |
-| 新增补丁高斯 | 76,253 |
-| 最终高斯 | 2,328,969 |
-| 删除/修改 Base 高斯 | 0 / 0 |
-
-Smoke test 的临时输出在验收后已删除；上表来自删除前的最终报告。
-
-## 依赖与 Windows 注意事项
-
-- 非 CUDA 依赖列在 `requirements.txt`；
-- GPU 栈必须匹配 `WINDOWS_ENVIRONMENT.md` 中的已验证版本；
-- 所有可能导入 torch、gsplat 或 SHARP 的 Python 都必须经 `run_cuda_python.cmd` 启动；
-- 不要随意升级/重装 torch 或 gsplat，Windows 兼容修改和已编译的 sm_120 扩展缓存会被破坏；
-- `run_sharp_hard_depth.py` 会在加载完整 SHARP 模型树前预加载 gsplat CUDA 后端，防止后端被错误初始化为 `None`。
-
-## 公开仓库与本地数据
-
-公开仓库只包含源码和文档；`assets/`、`outputs/`、两个模型权重及 API 密钥均由 `.gitignore` 排除。历史中的示例文件也已移除。运行 `run_demo.cmd` 前，需要自行准备符合“输入数据契约”的本地 `assets/` 示例。
-
-`download_models.cmd` 在进入 CUDA 运行环境前下载并校验两个权重，`run_studio.cmd` 和 `run_sample.cmd` 会自动调用它。仅校验已有文件时可运行 `download_models.cmd -VerifyOnly`。`run_cuda_python.cmd` 仍保持 Hugging Face 离线模式，推理过程不会临时下载模型。
-
-## 已知边界
-
-- 当前方法是单视角补丁生成，二维修复 RGB 的内容质量仍直接影响颜色和局部语义；
-- 只约束第一可见表面，第二层 opacity 被关闭；
-- SHARP 网格固定为 768×768，两层共 1,179,648 行；补丁裁剪依赖这个行来源约定；
-- 相机模型按 OpenCV pinhole K 与导出矩阵解释，当前实现以 `fx` 作为 SHARP 焦距，并要求输入数据彼此严格配准；
-- Append-only 设计不会清理基础 PLY 中残余的半透明洞边高斯；边缘遮盖主要由 Authority 核心和 150 px 六环补丁完成。
-
-## 第三方声明
-
-详见 `THIRD_PARTY_NOTICES.md` 及各 `third_party` 子目录中的原始许可证。本仓库未替用户或所属组织指定项目级许可证；对外发布前还应由仓库所有者补充适合自有代码和示例数据的 LICENSE。
+本仓库的**自有代码目前没有项目级 LICENSE**；若要声明整个项目开源，应先选择并添加许可证。第三方原始条款分别在 `third_party/ml-sharp/LICENSE`、`third_party/ml-sharp/LICENSE_MODEL`、`third_party/lingbot-depth/LICENSE`、`third_party/lingbot-depth/LEGAL.md`、`studio/web/vendor/supersplat/LICENSE`。SHARP 模型许可限制为非商业科研/学术开发，要求保留归属声明：`Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.` Viewer 上游来源与本地修改见 `studio/web/vendor/UPSTREAM.md`、`studio/web/vendor/supersplat/LOCAL_CHANGES.md`。未确认权利前不要公开本机 `assets/`、密钥或权重。

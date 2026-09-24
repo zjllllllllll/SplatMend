@@ -48,7 +48,12 @@ function Invoke-ModelDownload([string]$CurlPath, [string]$Url, [string]$PartPath
 }
 
 try {
-    $curl = (Get-Command curl.exe -ErrorAction Stop).Source
+    $curl = $null
+    if (-not $VerifyOnly) {
+        $command = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if (-not $command) { throw "curl.exe is required to download model weights; manual files can still be checked with -VerifyOnly." }
+        $curl = $command.Source
+    }
     foreach ($model in $models) {
         $destination = Join-Path $PSScriptRoot $model.RelativePath
         if (Test-VerifiedFile $destination $model) {
