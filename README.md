@@ -9,6 +9,10 @@
 
 SplatMend is a local Windows tool for repairing a hole in a 3D Gaussian Splatting (3DGS) scene. Open a PLY, select and delete an area, lock a camera view, generate a repaired RGB image with an image API, complete depth with LingBot-Depth, and generate an append-only SHARP Gaussian patch. The accepted result loads in the viewer and can be downloaded as a PLY.
 
+**Web tutorial (6 min 55 sec):** [Watch the MP4](docs/splatmend-web-tutorial.mp4) for a complete run, from opening a PLY and selecting a repair area to inspecting the result. The recording includes the processing wait.
+
+[![SplatMend web tutorial preview](docs/splatmend-web-tutorial.jpg)](docs/splatmend-web-tutorial.mp4)
+
 **License and permitted use.** The original SplatMend code is MIT-licensed, but the current end-to-end repair pipeline requires the Apple SHARP model. [Apple's model license](third_party/ml-sharp/LICENSE_MODEL) permits only non-commercial scientific research and academic development; it excludes commercial products, services and product development. The MIT license for SplatMend code does not override the SHARP model terms.
 
 **Platform and limits.** The verified setup is Windows, an NVIDIA RTX 5070 Ti (`sm_120`), CUDA Toolkit 12.8, Visual Studio 2022 Build Tools, and Python 3.13.13. Other GPUs/OSes have not been verified. Image generation uses a third-party provider and may incur charges. Model weights, API keys, local scenes and outputs are not included in Git.
@@ -108,6 +112,10 @@ The [MIT License](LICENSE) covers only original SplatMend code, copyright (c) 20
 **简体中文**
 
 SplatMend 是在 Windows 本机运行的 3D Gaussian Splatting（3DGS）补洞工具：打开 PLY，圈选/框选并删除目标区域，锁定视角，通过图片 API 修复 RGB，再用 LingBot-Depth 补深度、SHARP 生成高斯补丁。通过验收的结果会加载到网页，并可下载 PLY。
+
+**网页操作视频（6 分 55 秒）：**[观看 MP4](docs/splatmend-web-tutorial.mp4)，展示打开 PLY、选区补洞到查看结果的完整过程，包含实际计算等待时间。
+
+[![SplatMend 网页操作视频预览](docs/splatmend-web-tutorial.jpg)](docs/splatmend-web-tutorial.mp4)
 
 **许可与使用范围：**SplatMend 自有代码采用 MIT 许可证，但当前完整补洞流程必须使用 Apple SHARP 模型。[Apple 模型许可](third_party/ml-sharp/LICENSE_MODEL)仅允许非商业科学研究和学术开发，不包括商业产品、服务或产品开发。自有代码的 MIT 许可不能覆盖 SHARP 模型的限制。
 
