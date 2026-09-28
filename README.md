@@ -9,6 +9,8 @@
 
 SplatMend is a local Windows tool for repairing a hole in a 3D Gaussian Splatting (3DGS) scene. Open a PLY, select and delete an area, lock a camera view, generate a repaired RGB image with an image API, complete depth with LingBot-Depth, and generate an append-only SHARP Gaussian patch. The accepted result loads in the viewer and can be downloaded as a PLY.
 
+**License and permitted use.** The original SplatMend code is MIT-licensed, but the current end-to-end repair pipeline requires the Apple SHARP model. [Apple's model license](third_party/ml-sharp/LICENSE_MODEL) permits only non-commercial scientific research and academic development; it excludes commercial products, services and product development. The MIT license for SplatMend code does not override the SHARP model terms.
+
 **Platform and limits.** The verified setup is Windows, an NVIDIA RTX 5070 Ti (`sm_120`), CUDA Toolkit 12.8, Visual Studio 2022 Build Tools, and Python 3.13.13. Other GPUs/OSes have not been verified. Image generation uses a third-party provider and may incur charges. Model weights, API keys, local scenes and outputs are not included in Git.
 
 ### 1. Install the Windows/Python environment
@@ -96,7 +98,7 @@ The numeric input directory for `run_sample.cmd` needs `point_cloud.png` (RGBA h
 
 ### Licensing and third-party notices
 
-The original SplatMend code is available under the [MIT License](LICENSE), copyright (c) 2026 zhujunlin. Redistribution of that code must retain the copyright and license notice. Vendored source retains its own terms: Apple SHARP source in `third_party/ml-sharp/LICENSE`, SHARP weights in `third_party/ml-sharp/LICENSE_MODEL`, LingBot-Depth in `third_party/lingbot-depth/LICENSE` and `LEGAL.md`, and the SuperSplat viewer in `studio/web/vendor/supersplat/LICENSE`. SHARP model use is restricted to non-commercial research/academic development and requires the attribution stated in its model license: `Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.` See `studio/web/vendor/UPSTREAM.md` and `studio/web/vendor/supersplat/LOCAL_CHANGES.md` for viewer provenance and local changes. Do not publish local `assets/`, API keys or weights without the necessary rights.
+The [MIT License](LICENSE) covers only original SplatMend code, copyright (c) 2026 zhujunlin; redistribution of that code must retain its copyright and license notice. It does not license third-party components or permit commercial use of the current SHARP-dependent pipeline. Apple SHARP source has its own `third_party/ml-sharp/LICENSE`, while the required checkpoint has a separate `third_party/ml-sharp/LICENSE_MODEL` limiting it to non-commercial scientific research and academic development. The model license also requires this attribution when redistributing the model: `Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.` LingBot-Depth has `third_party/lingbot-depth/LICENSE` and `LEGAL.md`; the SuperSplat viewer has `studio/web/vendor/supersplat/LICENSE`. See `studio/web/vendor/UPSTREAM.md` and `studio/web/vendor/supersplat/LOCAL_CHANGES.md` for viewer provenance and local changes. Do not publish local `assets/`, API keys or weights without the necessary rights.
 
 ---
 
@@ -106,6 +108,8 @@ The original SplatMend code is available under the [MIT License](LICENSE), copyr
 **简体中文**
 
 SplatMend 是在 Windows 本机运行的 3D Gaussian Splatting（3DGS）补洞工具：打开 PLY，圈选/框选并删除目标区域，锁定视角，通过图片 API 修复 RGB，再用 LingBot-Depth 补深度、SHARP 生成高斯补丁。通过验收的结果会加载到网页，并可下载 PLY。
+
+**许可与使用范围：**SplatMend 自有代码采用 MIT 许可证，但当前完整补洞流程必须使用 Apple SHARP 模型。[Apple 模型许可](third_party/ml-sharp/LICENSE_MODEL)仅允许非商业科学研究和学术开发，不包括商业产品、服务或产品开发。自有代码的 MIT 许可不能覆盖 SHARP 模型的限制。
 
 **已验证平台与边界：**Windows、RTX 5070 Ti（`sm_120`）、CUDA Toolkit 12.8、VS 2022 Build Tools、Python 3.13.13。其他 GPU/系统尚未验证。图片 API 由第三方提供，可能产生费用。模型权重、密钥、本地场景与输出均不随 Git 分发。
 
@@ -176,4 +180,4 @@ run_cuda_python.cmd -c "from gsplat.cuda._backend import _C; print(_C.__file__)"
 
 `run_sample.cmd` 的输入目录需有同视角配准的 `point_cloud.png`（RGBA 洞图）、`point_cloud.depth.npy`（相机 Z 深度）、`point_cloud.camera.json`（内外参）、`point_cloud.ply`（基础高斯），另需一张修复后的 RGB。六步依次构造严格 Mask 与 RGB-D、LingBot 补深度、深度标定和验收、SHARP 深度锚定生成、六环裁剪与合并、最终不变量验收；基础高斯保持不变。
 
-SplatMend 自有代码采用 [MIT 许可证](LICENSE)，版权声明为 copyright (c) 2026 zhujunlin。再分发这些代码时须保留版权及许可声明。第三方原始条款分别在 `third_party/ml-sharp/LICENSE`、`third_party/ml-sharp/LICENSE_MODEL`、`third_party/lingbot-depth/LICENSE`、`third_party/lingbot-depth/LEGAL.md`、`studio/web/vendor/supersplat/LICENSE`。SHARP 模型许可限制为非商业科研/学术开发，要求保留归属声明：`Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.` Viewer 上游来源与本地修改见 `studio/web/vendor/UPSTREAM.md`、`studio/web/vendor/supersplat/LOCAL_CHANGES.md`。未确认权利前不要公开本机 `assets/`、密钥或权重。
+[MIT 许可证](LICENSE)仅适用于 SplatMend 自有代码，版权声明为 copyright (c) 2026 zhujunlin；再分发这些代码时须保留版权及许可声明。它不授权第三方组件，也不意味着当前依赖 SHARP 的完整流程可以商用。Apple SHARP 源码有独立的 `third_party/ml-sharp/LICENSE`，必需的模型权重另受 `third_party/ml-sharp/LICENSE_MODEL` 约束，仅限非商业科学研究和学术开发。再分发模型时还须保留归属声明：`Apple Machine Learning Research Model is licensed under the Apple Machine Learning Research Model License Agreement.` LingBot-Depth 的条款见 `third_party/lingbot-depth/LICENSE` 与 `LEGAL.md`；SuperSplat Viewer 的条款见 `studio/web/vendor/supersplat/LICENSE`。Viewer 上游来源与本地修改见 `studio/web/vendor/UPSTREAM.md`、`studio/web/vendor/supersplat/LOCAL_CHANGES.md`。未确认权利前不要公开本机 `assets/`、密钥或权重。
