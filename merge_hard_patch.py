@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import torch
 from gsplat.cuda._backend import _C as _gsplat_backend
+from prepare_depth_anchored_inputs import scaled_reference_pixels
+
 import cv2
 from PIL import Image
 from plyfile import PlyData, PlyElement
@@ -169,17 +171,6 @@ def color_depth(depth: np.ndarray, alpha: np.ndarray, lo: float, hi: float) -> n
     )
     result[~valid] = 0
     return cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
-
-
-def scaled_reference_pixels(
-    reference_pixels: int, width: int, height: int, reference_short_side: int
-) -> int:
-    if reference_pixels <= 0:
-        return 0
-    return max(
-        1,
-        int(round(reference_pixels * min(width, height) / reference_short_side)),
-    )
 
 
 def build_ring_blend_domain(

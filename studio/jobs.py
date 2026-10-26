@@ -250,9 +250,11 @@ class JobManager:
             (folder / "input").mkdir(parents=True)
             atomic_json(folder / "input" / "point_cloud.camera.json", request["camera"])
             atomic_json(folder / "request.json", {"scene_id": scene_id, "model": model, "prompt": prompt,
-                                                  "viewer_camera": viewer_camera})
+                                                  "viewer_camera": viewer_camera,
+                                                  "color_correction": bool(request.get("color_correction", False))})
             state = {"id": job_id, "status": "uploading", "stage": 0, "message": "Saving the locked view.",
-                     "created_at": time.time(), "model": model, "directory": str(folder)}
+                     "created_at": time.time(), "model": model, "directory": str(folder),
+                     "color_correction": bool(request.get("color_correction", False))}
             atomic_json(folder / "status.json", state)
             return state
 
@@ -262,6 +264,7 @@ class JobManager:
         scene = json.loads((self.scenes / identifier(request["scene_id"]) / "scene.json").read_text(encoding="utf-8"))
         return {"scene": scene, "model": request["model"], "prompt": request["prompt"],
                 "viewer_camera": request.get("viewer_camera"),
+                "color_correction": bool(request.get("color_correction", False)),
                 "camera": json.loads((folder / "input" / "point_cloud.camera.json").read_text(encoding="utf-8"))}
 
     def state(self, job_id: str) -> dict:
@@ -310,20 +313,29 @@ class JobManager:
             threading.Thread(target=self._run, args=(job_id,), daemon=True).start()
             return self.state(job_id)
 
-    def retry_download(self, job_id: str) -> dict:
+    def _set_color_correction(self, job_id: str, enabled: bool | None):
+        if enabled is not None:
+            path = self.jobs / job_id / "request.json"
+            request = json.loads(path.read_text(encoding="utf-8"))
+            request["color_correction"] = bool(enabled)
+            atomic_json(path, request)
+            self.update(job_id, color_correction=bool(enabled))
+
+    def retry_download(self, job_id: str, color_correction: bool | None = None) -> dict:
         with self.lock:
             if self.active or self.state(job_id)["status"] != "failed":
                 raise ValueError("Wait for the current task to finish.")
             if not self.state(job_id).get("can_retry_download"):
                 raise ValueError("The in-memory API result is no longer available. A new job requires a new image request.")
             model_preflight(self.state(job_id).get("model"))
+            self._set_color_correction(job_id, color_correction)
             self.active = job_id
             self.idle.clear()
             self.update(job_id, status="validating", can_retry_download=False, message="Retrying the existing image download; no new generation request.")
             threading.Thread(target=self._run, args=(job_id, True), daemon=True).start()
             return self.state(job_id)
 
-    def retry_pipeline(self, job_id: str) -> dict:
+    def retry_pipeline(self, job_id: str, color_correction: bool | None = None) -> dict:
         with self.lock:
             state = self.state(job_id)
             if self.active or state["status"] != "failed" or not state.get("image_ready"):
@@ -331,6 +343,7 @@ class JobManager:
             if state.get("model") not in MODELS:
                 raise ValueError("This historical model is no longer supported. Open a scene and choose a supported model.")
             self._verified_repaired_image(job_id)
+            self._set_color_correction(job_id, color_correction)
             self.active = job_id
             self.idle.clear()
             self.update(job_id, status="validating", stage=0, can_retry_pipeline=False,
@@ -364,11 +377,10 @@ class JobManager:
             raise ValueError("Depth contains invalid infinite values or alpha.")
         if np.any((depth[..., 1] < 0) | (depth[..., 1] > 1)):
             raise ValueError("Depth alpha must be between 0 and 1.")
-        # Reuse the exact original mask definition as a no-cost preflight.
-        from prepare_depth_anchored_inputs import largest_component, components_touching_seed
+        # Preview the same expanded repair domain used by RGB and depth preparation.
+        from prepare_depth_anchored_inputs import repair_masks_from_alpha
         alpha = np.asarray(image)[..., 3]
-        core = largest_component(alpha <= 204)
-        authority = components_touching_seed(alpha < 255, core) | core
+        _, _, authority, _ = repair_masks_from_alpha(alpha)
         if not np.any(~authority & np.isfinite(depth[..., 0]) & (depth[..., 0] > 1e-3)):
             raise ValueError("No valid observed depth outside the hole; choose a view with more surrounding context.")
         Image.fromarray(authority.astype(np.uint8) * 255).save(folder / "hole_preview.png")
@@ -414,11 +426,16 @@ class JobManager:
                 repaired = repair_image(folder / "input" / "point_cloud.png", folder / "appearance",
                                         request["model"], request["prompt"], read_key(self.root, request["model"]), result_cache=cached)
             self.image_results.pop(job_id, None)
-            self.update(job_id, status="color_correction", image_ready=True,
-                        message="Color correction: Laplacian interpolation using a 30–180 px band outside the mask; zero correction at the patch center.")
-            corrected = correct_file(folder / "input" / "point_cloud.png", repaired,
-                                     folder / "appearance" / "color_corrected_rgb.png")
-            self.update(job_id, status="pipeline", image_ready=True, color_corrected=True,
+            color_correction = bool(request.get("color_correction", False))
+            pipeline_rgb = repaired
+            if color_correction:
+                self.update(job_id, status="color_correction", image_ready=True, color_correction=True,
+                            color_corrected=False,
+                            message="Color correction: Laplacian interpolation using a 30–180 px band outside the mask; zero correction at the patch center.")
+                pipeline_rgb = correct_file(folder / "input" / "point_cloud.png", repaired,
+                                            folder / "appearance" / "color_corrected_rgb.png")
+            self.update(job_id, status="pipeline", stage=0, image_ready=True,
+                        color_correction=color_correction, color_corrected=color_correction,
                         message="Running the existing six-step depth-anchored pipeline.")
             fingerprints = {name: digest(self.root / name) for name in BASELINE_FILES}
             atomic_json(folder / "pipeline_baseline.json", fingerprints)
@@ -426,7 +443,7 @@ class JobManager:
             # The only numerical entry point. No alternate commands, flags, or model fallbacks.
             # The existing verifier's --sample-id is an integer, not a UUID.
             sample_id = str(int(job_id, 16))
-            command = [str(self.root / "run_sample.cmd"), sample_id, str(folder / "input"), str(corrected), str(output)]
+            command = [str(self.root / "run_sample.cmd"), sample_id, str(folder / "input"), str(pipeline_rgb), str(output)]
             with (folder / "pipeline.log").open("w", encoding="utf-8") as log:
                 self.update(job_id, log_ready=True)
                 process = subprocess.Popen(command, cwd=self.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

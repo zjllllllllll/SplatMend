@@ -26,10 +26,11 @@ import { getLanguage, setLanguage, t, translateDom, translateMessage } from './i
 
 type SceneInfo = { id: string, name: string, count: number, file: string };
 type ModelProfile = { id: string, label: string, sizes: [number, number][], input_transport: string, response_format: string };
-type JobView = { scene: SceneInfo, model: string, prompt: string,
+type JobView = { scene: SceneInfo, model: string, prompt: string, color_correction: boolean,
     viewer_camera: ReturnType<Scene['camera']['docSerialize']> | null,
     camera: ReturnType<typeof cameraMetadata> };
 type JobState = { status: string, message: string, stage: number, image_ready?: boolean, color_corrected?: boolean,
+    color_correction?: boolean,
     log_ready?: boolean, can_retry_download?: boolean, can_retry_pipeline?: boolean,
     directory: string, result?: string, result_scene?: SceneInfo };
 
@@ -81,7 +82,7 @@ function showProgress(next: ReturnType<typeof phase>, reveal = false) {
 }
 
 function failProgress(message: string) {
-    if (currentProgress) showProgress(phase(currentProgress.index, message, 'failed'));
+    if (currentProgress) showProgress(phase(currentProgress.index, message, 'failed', currentProgress.colorCorrection));
 }
 
 function forgetJob() {
@@ -119,6 +120,7 @@ function controls() {
     el<HTMLSelectElement>('model').disabled = busy || !apiReady;
     el<HTMLSelectElement>('resolution').disabled = busy;
     el<HTMLTextAreaElement>('prompt').disabled = busy;
+    el<HTMLInputElement>('color-correction').disabled = busy;
     el('lock-shield').hidden = !busy || !source;
     if (active) el('counts').textContent = t('{count} splats · {selected} selected', { count: active.numSplats.toLocaleString(), selected: active.numSelected.toLocaleString() });
 }
@@ -244,7 +246,8 @@ async function startRepair() {
         const exported = await capture(scene, active, width, height);
         showProgress(phase(1, 'Saving the image with a hole, depth, deletion mask and camera data…'));
         const request = { scene_id: source.id, model: el<HTMLSelectElement>('model').value,
-            prompt: el<HTMLTextAreaElement>('prompt').value, camera: exported.camera, viewer_camera: savedCamera };
+            prompt: el<HTMLTextAreaElement>('prompt').value, camera: exported.camera, viewer_camera: savedCamera,
+            color_correction: el<HTMLInputElement>('color-correction').checked };
         const job = await api('/api/jobs', 'POST', JSON.stringify(request), 'application/json');
         const jobId = job.id;
         // Serial uploads are intentional: bounded memory and unambiguous completion.
@@ -269,6 +272,7 @@ function restoreCamera(view: JobView) {
 }
 
 async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'retry-pipeline') {
+    const colorCorrection = el<HTMLInputElement>('color-correction').checked;
     setBusy(true);
     showProgress(phase(action === 'retry-pipeline' ? 3 : action === 'retry-download' ? 2 : 1,
         'Reading this job; no new image generation request…', 'waiting'), true);
@@ -286,6 +290,7 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         // An unsupported value selects nothing and blocks a new job until chosen.
         el<HTMLSelectElement>('model').value = view.model;
         el<HTMLTextAreaElement>('prompt').value = view.prompt;
+        el<HTMLInputElement>('color-correction').checked = action ? colorCorrection : Boolean(view.color_correction);
         el<HTMLSelectElement>('resolution').value = `${view.camera.image.width},${view.camera.image.height}`;
         resizeFrame();
         el('retry-download').hidden = true;
@@ -310,7 +315,10 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         controls();
         el('lock-shield').hidden = false;
         if (action) {
-            try { await api(`/api/jobs/${jobId}/${action}`, 'POST'); }
+            try {
+                const options = action === 'start' ? undefined : JSON.stringify({ color_correction: colorCorrection });
+                await api(`/api/jobs/${jobId}/${action}`, 'POST', options, options ? 'application/json' : undefined);
+            }
             catch {
                 // An interrupted response does not prove submission failed. Read
                 // the same task; never automatically submit or generate twice.
@@ -353,7 +361,7 @@ async function followJob(jobId: string, action?: 'start' | 'retry-download' | 'r
         sourceBlob = resultBlob;
         released = false;
         el('scene-name').textContent = 'repaired_scene.ply';
-        showProgress(phase(10, 'The six-step pipeline accepted the result. Scene loaded; PLY is ready to download.', 'complete'));
+        showProgress(phase(10, 'The six-step pipeline accepted the result. Scene loaded; PLY is ready to download.', 'complete', state.color_correction ?? state.color_corrected));
         status('Repair complete. The accepted result is loaded and ready to download.');
     } catch (error) {
         failProgress(error.message);

@@ -111,8 +111,9 @@ def main() -> None:
 
     native_counts = selection.get("native_pixels_by_label", {})
     selected_counts = selection.get("selected_gaussians_by_label", {})
-    if int(native_counts.get("core", -2)) != authority_pixels:
-        failures.append("blend core differs from the authoritative hole mask")
+    alpha_hole_pixels = int(preparation.get("mask", {}).get("alpha_hole_pixels", authority_pixels))
+    if int(native_counts.get("core", -2)) != alpha_hole_pixels:
+        failures.append("blend core differs from the original alpha hole mask")
     for ring_index in range(1, 7):
         if int(native_counts.get(f"ring_{ring_index}", 0)) <= 0:
             failures.append(f"native blend ring {ring_index} is empty")

@@ -14,12 +14,11 @@ from scipy.ndimage import distance_transform_edt
 from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import splu
 
-from prepare_depth_anchored_inputs import components_touching_seed, largest_component
+from prepare_depth_anchored_inputs import repair_masks_from_alpha
 
 
 def authority_from_alpha(alpha: np.ndarray) -> np.ndarray:
-    core = largest_component(alpha <= 204)
-    return components_touching_seed(alpha < 255, core) | core
+    return repair_masks_from_alpha(alpha)[2]
 
 
 def _solve_laplace(mask: np.ndarray, center: np.ndarray, boundary: np.ndarray) -> tuple[np.ndarray, dict]:

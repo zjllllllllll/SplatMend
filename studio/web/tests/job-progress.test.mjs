@@ -72,3 +72,11 @@ test('renderer exposes accessible step states, bounded meter and error text with
     renderProgress(doc,null);
     assert.equal(elements.get('job-progress').hidden,true);
 });
+
+test('disabled color correction is shown as skipped during the pipeline and after loading', () => {
+    const current = jobProgress({ status: 'pipeline', stage: 3, color_correction: false });
+    assert.equal(progressDisplay(current).rows[3].label, 'Color correction (skipped)');
+    assert.equal(progressDisplay(current).rows[3].marker, '–');
+    const complete = phase(10, 'loaded', 'complete', false);
+    assert.equal(progressDisplay(complete).rows[3].label, 'Color correction (skipped)');
+});

@@ -234,10 +234,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(201, manager.create(self._body_json()))
             if len(segments) == 4 and segments[:2] == ["api", "jobs"] and segments[3] == "start":
                 return self._json(202, manager.submit(identifier(segments[2])))
-            if len(segments) == 4 and segments[:2] == ["api", "jobs"] and segments[3] == "retry-download":
-                return self._json(202, manager.retry_download(identifier(segments[2])))
-            if len(segments) == 4 and segments[:2] == ["api", "jobs"] and segments[3] == "retry-pipeline":
-                return self._json(202, manager.retry_pipeline(identifier(segments[2])))
+            if len(segments) == 4 and segments[:2] == ["api", "jobs"] and segments[3] in {"retry-download", "retry-pipeline"}:
+                options = self._body_json() if int(self.headers.get("Content-Length", "0")) else {}
+                retry = manager.retry_download if segments[3] == "retry-download" else manager.retry_pipeline
+                return self._json(202, retry(identifier(segments[2]), color_correction=options.get("color_correction")))
             if len(segments) == 5 and segments[:2] == ["api", "jobs"] and segments[3] == "input":
                 job_id, filename = identifier(segments[2]), segments[4]
                 # Hold the state lock so start cannot race with an unfinished upload.

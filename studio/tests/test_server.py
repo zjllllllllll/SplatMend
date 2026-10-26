@@ -83,6 +83,15 @@ class ServerTests(unittest.TestCase):
         submit.assert_not_called()
         retry.assert_not_called()
 
+    def test_retry_passes_color_correction_choice_without_generating_images(self):
+        job_id = "a" * 32
+        headers = {"X-Studio-Token": self.server.token, "Content-Type": "application/json"}
+        for route, method in [("retry-pipeline", "retry_pipeline"), ("retry-download", "retry_download")]:
+            with patch.object(self.server.manager, method, return_value={"id": job_id}) as retry:
+                self.assertEqual(self.request("POST", f"/api/jobs/{job_id}/{route}",
+                                              b'{"color_correction":false}', headers)[0], 202)
+                retry.assert_called_once_with(job_id, color_correction=False)
+
     def test_repeated_launcher_uses_verified_existing_server_without_starting_work(self):
         with patch.object(self.server.manager, "submit") as submit, patch.object(self.server.manager, "retry_pipeline") as retry:
             self.assertEqual(existing_studio_url(self.root), f"http://127.0.0.1:{self.server.server_port}")

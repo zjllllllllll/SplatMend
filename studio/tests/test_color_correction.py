@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from studio.color_correction import _solve_laplace, correct_rgb
+from studio.color_correction import _solve_laplace, authority_from_alpha, correct_rgb
 from scipy.ndimage import distance_transform_edt
 
 
@@ -29,7 +29,8 @@ class ColorCorrectionTests(unittest.TestCase):
         corrected, report = correct_rgb(source, repaired, radius=32, blur_sigma=12)
 
         np.testing.assert_array_equal(corrected[0, 0], source[0, 0, :3])
-        near = np.abs(corrected[65, 128].astype(int) - source[65, 128, :3].astype(int)).sum()
+        edge_y = 64 - round(150 * 256 / 1440) + 1
+        near = np.abs(corrected[edge_y, 128].astype(int) - source[edge_y, 128, :3].astype(int)).sum()
         deep = np.abs(corrected[128, 128].astype(int) - source[128, 128, :3].astype(int)).sum()
         self.assertLess(near, 8)
         self.assertGreater(deep, near)
@@ -42,7 +43,7 @@ class ColorCorrectionTests(unittest.TestCase):
         source[..., :3] = (120, 110, 95)
         source[..., 3] = 255
         source[64:192, 64:192, 3] = 0
-        mask = source[..., 3] == 0
+        mask = authority_from_alpha(source[..., 3])
         repaired = np.full((256, 256, 3), (175, 135, 125), dtype=np.uint8)
         distance = distance_transform_edt(~mask)
         dark_source = source.copy()

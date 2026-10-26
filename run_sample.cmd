@@ -86,7 +86,7 @@ echo [5/6] Select the authority core plus six rings and append in scene coordina
 call "%PIPELINE_PYTHON_LAUNCHER%" "%PIPELINE_ROOT%merge_hard_patch.py" ^
   --base-ply "%SAMPLE_DIR%\point_cloud.ply" ^
   --sharp-camera-ply "%OUTPUT_DIR%\sharp_hard\sharp_hard_layer0_camera.ply" ^
-  --hole-mask "%OUTPUT_DIR%\prepared\hole_authority.png" ^
+  --hole-mask "%OUTPUT_DIR%\prepared\hole_alpha.png" ^
   --source-rgba "%SAMPLE_DIR%\point_cloud.png" ^
   --target-rgb "%OUTPUT_DIR%\prepared\rgb_completed_exact.png" ^
   --target-depth "%OUTPUT_DIR%\depth\depth_completed_exact.npy" ^

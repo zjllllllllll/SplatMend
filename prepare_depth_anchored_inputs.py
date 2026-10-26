@@ -1,7 +1,8 @@
 """Prepare deterministic RGB-D inputs for depth-anchored SHARP completion.
 
-The source render is authoritative outside the alpha hole.  The repaired RGB is
-used only inside the connected alpha-hole component.  This script writes the
+The source render is authoritative outside the expanded repair region.  The
+repaired RGB and missing depth share the alpha hole plus its blend band, before
+LingBot or SHARP consumes either image.  This script writes the
 pixel-registered inputs consumed by LingBot and a machine-readable acceptance
 report; it intentionally performs no learned inference.
 """
@@ -57,6 +58,39 @@ def components_touching_seed(mask: np.ndarray, seed: np.ndarray) -> np.ndarray:
     if touched.size == 0:
         raise RuntimeError("soft alpha region does not touch the authoritative hole")
     return np.isin(labels, touched)
+
+
+MASK_EXPAND_REFERENCE_PIXELS = 150
+MASK_REFERENCE_SHORT_SIDE = 1440
+
+
+def scaled_reference_pixels(
+    reference_pixels: int, width: int, height: int, reference_short_side: int
+) -> int:
+    if reference_pixels <= 0:
+        return 0
+    return max(
+        1,
+        int(round(reference_pixels * min(width, height) / reference_short_side)),
+    )
+
+
+def repair_masks_from_alpha(
+    alpha: np.ndarray, min_transparency: float = 0.20
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Share the original hole and its resolution-scaled blend domain."""
+    alpha_limit = int(round(255.0 * (1.0 - min_transparency)))
+    core = largest_component(alpha <= alpha_limit)
+    alpha_hole = components_touching_seed(alpha < 255, core) | core
+    height, width = alpha.shape
+    radius = scaled_reference_pixels(
+        MASK_EXPAND_REFERENCE_PIXELS, width, height, MASK_REFERENCE_SHORT_SIDE
+    )
+    distance = cv2.distanceTransform(
+        (~alpha_hole).astype(np.uint8), cv2.DIST_L2, cv2.DIST_MASK_PRECISE
+    )
+    authority = alpha_hole | (distance <= float(radius))
+    return core, alpha_hole, authority, radius
 
 
 def depth_preview(depth: np.ndarray, valid: np.ndarray) -> np.ndarray:
@@ -128,12 +162,9 @@ def main() -> None:
         )
 
     alpha_limit = int(round(255.0 * (1.0 - args.min_transparency)))
-    core_seed = largest_component(alpha_u8 <= alpha_limit)
-    # The source has a soft alpha fringe around the black center.  Keep only the
-    # sub-255 alpha components connected to the large central seed; unrelated tiny
-    # transparent speckles are not part of the edit authority.
-    authority = components_touching_seed(alpha_u8 < 255, core_seed)
-    authority |= core_seed
+    core_seed, alpha_hole, authority, expand_radius = repair_masks_from_alpha(
+        alpha_u8, args.min_transparency
+    )
     if not np.any(authority):
         raise RuntimeError("empty edit authority")
 
@@ -142,11 +173,9 @@ def main() -> None:
     context = cv2.dilate(authority.astype(np.uint8), kernel, iterations=1).astype(bool)
     context_ring = context & ~authority
 
-    # The RGB values under the soft-alpha fringe are already contaminated by the
-    # black export background.  Blending those values creates a dark halo even
-    # though it satisfies the outside invariant numerically.  Use the registered
-    # repaired image for the complete connected alpha component, and switch exactly
-    # at its first fully opaque boundary pixel.  Boundary quality is measured below.
+    # Fully opaque pixels beside the alpha hole can still contain damaged color
+    # and depth. Replace the complete expanded domain before either model runs;
+    # the context ring above starts outside that same domain.
     rgb_exact = source_rgb.copy()
     rgb_exact[authority] = repaired[authority]
     rgb_exact[~authority] = source_rgb[~authority]
@@ -186,6 +215,7 @@ def main() -> None:
     paths = {
         "rgb": output / "rgb_completed_exact.png",
         "hole": output / "hole_authority.png",
+        "alpha_hole": output / "hole_alpha.png",
         "core": output / "hole_core.png",
         "context": output / "context_ring.png",
         "depth_input": output / "depth_observed_with_hole.npy",
@@ -195,6 +225,7 @@ def main() -> None:
     }
     save_image(paths["rgb"], rgb_exact)
     save_image(paths["hole"], authority.astype(np.uint8) * 255)
+    save_image(paths["alpha_hole"], alpha_hole.astype(np.uint8) * 255)
     save_image(paths["core"], core_seed.astype(np.uint8) * 255)
     save_image(paths["context"], context_ring.astype(np.uint8) * 255)
     np.save(paths["depth_input"], depth_input)
@@ -235,7 +266,11 @@ def main() -> None:
         "mask": {
             "alpha_limit": alpha_limit,
             "core_pixels": int(core_seed.sum()),
+            "alpha_hole_pixels": int(alpha_hole.sum()),
             "authority_pixels": int(authority.sum()),
+            "expand_reference_pixels": MASK_EXPAND_REFERENCE_PIXELS,
+            "expand_reference_short_side": MASK_REFERENCE_SHORT_SIDE,
+            "expand_radius_pixels": expand_radius,
             "context_ring_pixels": int(context_ring.sum()),
             "bbox_xyxy": [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())],
         },

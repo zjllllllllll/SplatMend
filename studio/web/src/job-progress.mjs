@@ -7,32 +7,33 @@ export const progressSteps = [
     'Validate final result', 'Load repaired result'
 ];
 
-export function phase(index, message, mode = 'running') {
-    return { index, message, mode };
+export function phase(index, message, mode = 'running', colorCorrection = true) {
+    return { index, message, mode, colorCorrection };
 }
 
 export function jobProgress(state, previous = phase(1, 'Reading job status…')) {
+    const next = (index, message, mode = 'running') => phase(index, message, mode, state.color_correction ?? state.color_corrected ?? true);
     const stage = Number.isInteger(state.stage) && state.stage >= 1 && state.stage <= 6 ? state.stage : 0;
     const pipelineIndex = stage ? stage + 3 : 4;
     switch (state.status) {
-        case 'uploading': return phase(1, state.message);
-        case 'validating': return phase(state.image_ready ? 3 : 1, state.message);
-        case 'image_api': return phase(2, state.message);
-        case 'color_correction': return phase(3, state.message);
-        case 'pipeline': return phase(pipelineIndex, state.message);
+        case 'uploading': return next(1, state.message);
+        case 'validating': return next(state.image_ready ? 3 : 1, state.message);
+        case 'image_api': return next(2, state.message);
+        case 'color_correction': return next(3, state.message);
+        case 'pipeline': return next(pipelineIndex, state.message);
         // Accepted output still needs to download and load before UI completion.
-        case 'succeeded': return phase(10, '3D result accepted. Downloading and loading the scene…');
+        case 'succeeded': return next(10, '3D result accepted. Downloading and loading the scene…');
         case 'failed': {
             let index = stage || state.image_ready ? pipelineIndex : 1;
             if (state.failed_phase === 'image_api' || state.can_retry_download) index = 2;
             else if (state.failed_phase === 'color_correction') index = 3;
             else if (state.failed_phase === 'validating' && !state.image_ready) index = 1;
             else if (!stage && !state.image_ready && previous.index === 2) index = 2;
-            return phase(index, state.message, 'failed');
+            return next(index, state.message, 'failed');
         }
-        case 'recovering': return phase(stage || state.image_ready ? pipelineIndex : previous.index,
+        case 'recovering': return next(stage || state.image_ready ? pipelineIndex : previous.index,
             `Recovering the job without resubmitting. ${state.message || ''}`, 'waiting');
-        default: return phase(previous.index, 'Confirming job status…', 'waiting');
+        default: return next(previous.index, 'Confirming job status…', 'waiting');
     }
 }
 
@@ -44,9 +45,9 @@ export function progressDisplay(current) {
         completed,
         headline: complete ? t('Repair complete · result loaded') : `${String(current.index + 1).padStart(2, '0')} ${t(progressSteps[current.index])} · ${stateLabel}`,
         count: t('{completed} / {total} steps complete', { completed, total: progressSteps.length }),
-        rows: progressSteps.map((label, index) => ({ label: t(label),
+        rows: progressSteps.map((label, index) => ({ label: t(index === 3 && !current.colorCorrection ? 'Color correction (skipped)' : label),
             state: index < completed ? 'done' : index === current.index ? current.mode : 'pending',
-            marker: index < completed ? '✓' : index === current.index && current.mode === 'failed' ? '!' : String(index + 1).padStart(2, '0')
+            marker: index < completed ? (index === 3 && !current.colorCorrection ? '–' : '✓') : index === current.index && current.mode === 'failed' ? '!' : String(index + 1).padStart(2, '0')
         }))
     };
 }

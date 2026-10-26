@@ -170,8 +170,45 @@ class JobTests(unittest.TestCase):
             self.manager.active = None
             self.manager.idle.set()
 
+    def test_color_correction_defaults_off_and_is_saved_in_job_view(self):
+        job_id, folder = self.new_job()
+        self.assertFalse(self.manager.view(job_id)["color_correction"])
+        self.assertFalse(json.loads((folder / "request.json").read_text(encoding="utf-8"))["color_correction"])
+        self.manager._set_color_correction(job_id, True)
+        self.assertTrue(self.manager.view(job_id)["color_correction"])
+
+    def test_disabled_color_correction_uses_api_image_directly(self):
+        job_id, folder = self.new_job()
+        repaired = folder / "appearance" / "repaired_rgb.png"
+        repaired.parent.mkdir()
+        Image.new("RGB", (256, 256), (230, 220, 210)).save(repaired)
+        process = Mock(stdout=io.StringIO("[1/6] Prepare\n"))
+        process.wait.return_value = 1
+        with patch("studio.jobs.repair_image", return_value=repaired), \
+             patch("studio.jobs.correct_file") as correct, \
+             patch("studio.jobs.subprocess.Popen", return_value=process) as spawn:
+            self.manager._run(job_id)
+        correct.assert_not_called()
+        self.assertEqual(spawn.call_args.args[0][3], str(repaired))
+        self.assertFalse(self.manager.state(job_id)["color_corrected"])
+        self.assertFalse((repaired.parent / "color_corrected_rgb.png").exists())
+
+    def test_retry_can_disable_color_correction_and_reuse_saved_image(self):
+        job_id, folder = self.new_job()
+        self.manager._set_color_correction(job_id, True)
+        self.manager.update(job_id, status="failed", image_ready=True, can_retry_pipeline=True)
+        with patch.object(self.manager, "_verified_repaired_image"), \
+             patch("studio.jobs.threading.Thread") as thread, patch("studio.jobs.repair_image") as repair:
+            self.manager.retry_pipeline(job_id, color_correction=False)
+        self.assertFalse(self.manager.view(job_id)["color_correction"])
+        self.assertFalse(self.manager.state(job_id)["color_correction"])
+        self.assertEqual(thread.call_args.kwargs["args"], (job_id, False, True))
+        thread.return_value.start.assert_called_once()
+        repair.assert_not_called()
+
     def test_only_original_launcher_and_verified_result(self):
         job_id, folder = self.new_job()
+        self.manager._set_color_correction(job_id, True)
         repaired = folder / "appearance" / "repaired_rgb.png"
         repaired.parent.mkdir()
         Image.new("RGB", (256, 256), (230, 220, 210)).save(repaired)
